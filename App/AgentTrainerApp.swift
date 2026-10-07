@@ -10,7 +10,7 @@ struct AgentTrainerApp: App {
             ContentView(session: session)
                 .frame(minWidth: 1050, minHeight: 720)
                 .preferredColorScheme(session.store.preferences.appearance == "Dark" ? .dark : session.store.preferences.appearance == "Light" ? .light : nil)
-                .task { await session.store.load(); session.recorder.permissions.refresh() }
+                .task { delegate.session = session; await session.store.load(); session.recorder.permissions.refresh(); session.installShortcuts() }
         }
         .defaultSize(width: 1320, height: 860)
         .commands {
@@ -28,10 +28,27 @@ struct AgentTrainerApp: App {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+@MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
+    var session: AppSession?
+    private var terminating = false
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let session else { return .terminateNow }
+        session.saveRecordingForm()
+        guard session.recorder.isBusy || session.trainer.isBusy || session.store.migrating else { session.shortcuts.stop(); return .terminateNow }
+        guard !terminating else { return .terminateLater }
+        terminating = true
+        session.trainer.pause()
+        Task { @MainActor in
+            await session.recorder.stop()
+            while session.trainer.isBusy || session.store.migrating { try? await Task.sleep(for: .milliseconds(100)) }
+            session.shortcuts.stop()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
 }

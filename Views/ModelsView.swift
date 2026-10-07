@@ -8,7 +8,7 @@ struct ModelsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             PageHeader(title: "AI Models", subtitle: "Shape what your agents see, remember and do.") {
-                Button { creating = true } label: { Label("Create model", systemImage: "plus") }.buttonStyle(.borderedProminent)
+                Button { creating = true } label: { Label("Create model", systemImage: "plus") }.buttonStyle(.borderedProminent).accessibilityIdentifier("models.create")
             }
             if store.models.isEmpty {
                 EmptyState(symbol: "cpu", title: "An agent of your own", message: "Create a model, choose its capabilities, and connect the demonstrations it will learn from.")
@@ -34,11 +34,11 @@ struct ModelsView: View {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Create a model").font(.title2.weight(.semibold))
                 Text("Start with a spatial vision encoder and temporal memory. You can configure architecture and capabilities before training.").foregroundStyle(.secondary)
-                TextField("Model name", text: $name).textFieldStyle(.roundedBorder)
+                TextField("Model name", text: $name).textFieldStyle(.roundedBorder).accessibilityIdentifier("models.name")
                 HStack { Spacer(); Button("Cancel") { creating = false }; Button("Create model") {
                     do { selectedID = try store.createModel(name: name).id; creating = false }
                     catch { store.error = error.localizedDescription }
-                }.buttonStyle(.borderedProminent).disabled(name.trimmingCharacters(in: .whitespaces).isEmpty) }
+                }.buttonStyle(.borderedProminent).disabled(name.trimmingCharacters(in: .whitespaces).isEmpty).accessibilityIdentifier("models.confirmCreate") }
             }.padding(28).frame(width: 440)
         }
     }
@@ -48,6 +48,8 @@ private struct ModelEditor: View {
     var store: WorkspaceStore
     let original: AIModel
     @State private var draft: AIModel
+    @State private var showKeys = false
+    @State private var showRecordings = false
     init(store: WorkspaceStore, original: AIModel) { self.store = store; self.original = original; _draft = State(initialValue: original) }
     var body: some View {
         Form {
@@ -84,7 +86,13 @@ private struct ModelEditor: View {
                         if $0 { draft.configuration.capabilities.buttons.insert(code) } else { draft.configuration.capabilities.buttons.remove(code) }
                     }))
                 }
-                DisclosureGroup("Allowed keyboard keys · \(draft.configuration.capabilities.keys.count)") {
+                Button("\(showKeys ? "Hide" : "Choose") keyboard keys · \(draft.configuration.capabilities.keys.count) allowed") { showKeys.toggle() }
+                    .accessibilityLabel("Choose allowed keyboard keys").accessibilityIdentifier("models.chooseKeys")
+                if showKeys {
+                    HStack {
+                        Button("All listed keys") { draft.configuration.capabilities.keys = Set(KeyNames.names.keys) }
+                        Button("Clear keys") { draft.configuration.capabilities.keys.removeAll() }
+                    }
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 105))], alignment: .leading, spacing: 8) {
                         ForEach(KeyNames.names.keys.sorted(), id: \.self) { code in
                             Toggle(KeyNames.name(code), isOn: Binding(get: { draft.configuration.capabilities.keys.contains(code) }, set: {
@@ -101,7 +109,9 @@ private struct ModelEditor: View {
                         if $0 { draft.imitationFolderIDs.insert(folder.id) } else { draft.imitationFolderIDs.remove(folder.id) }
                     }))
                 }
-                DisclosureGroup("Individual recordings") {
+                Button(showRecordings ? "Hide individual recordings" : "Choose individual recordings") { showRecordings.toggle() }
+                    .accessibilityLabel("Choose individual recordings")
+                if showRecordings {
                     ForEach(store.recordings.filter { $0.manifest.kind == .imitation }) { item in
                         Toggle(item.name, isOn: Binding(get: { draft.imitationRecordingIDs.contains(item.id) }, set: {
                             if $0 { draft.imitationRecordingIDs.insert(item.id) } else { draft.imitationRecordingIDs.remove(item.id) }

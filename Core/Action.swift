@@ -49,7 +49,7 @@ struct InputState: Codable, Equatable, Sendable {
 }
 
 struct ActionCapabilities: Codable, Equatable, Sendable {
-    var keys: Set<UInt16> = [0, 1, 2, 13, 49, 123, 124, 125, 126]
+    var keys: Set<UInt16> = Set(KeyNames.names.keys)
     var pointer = true
     var relativePointer = false
     var buttons: Set<Int> = [0, 1]
@@ -101,7 +101,16 @@ enum KeyNames {
         38: "J", 39: "'", 40: "K", 41: ";", 42: "\\", 43: ",", 44: "/", 45: "N", 46: "M",
         47: ".", 48: "Tab", 49: "Space", 50: "`", 51: "Delete", 53: "Escape", 54: "Right Command",
         55: "Command", 56: "Shift", 57: "Caps Lock", 58: "Option", 59: "Control", 60: "Right Shift",
-        61: "Right Option", 62: "Right Control", 63: "Fn", 123: "←", 124: "→", 125: "↓", 126: "↑"
+        61: "Right Option", 62: "Right Control", 63: "Fn", 123: "←", 124: "→", 125: "↓", 126: "↑",
+        10: "ISO Section", 64: "F17", 65: "Keypad Decimal", 67: "Keypad Multiply", 69: "Keypad Plus",
+        71: "Keypad Clear", 72: "Volume Up", 73: "Volume Down", 74: "Mute", 75: "Keypad Divide",
+        76: "Keypad Enter", 78: "Keypad Minus", 79: "F18", 80: "F19", 81: "Keypad Equals",
+        82: "Keypad 0", 83: "Keypad 1", 84: "Keypad 2", 85: "Keypad 3", 86: "Keypad 4", 87: "Keypad 5",
+        88: "Keypad 6", 89: "Keypad 7", 90: "F20", 91: "Keypad 8", 92: "Keypad 9", 93: "JIS Yen",
+        94: "JIS Underscore", 95: "Keypad Comma", 96: "F5", 97: "F6", 98: "F7", 99: "F3", 100: "F8",
+        101: "F9", 102: "JIS Eisu", 103: "F11", 104: "JIS Kana", 105: "F13", 106: "F16", 107: "F14",
+        109: "F10", 110: "Context Menu", 111: "F12", 113: "F15", 114: "Help", 115: "Home",
+        116: "Page Up", 117: "Forward Delete", 118: "F4", 119: "End", 120: "F2", 121: "Page Down", 122: "F1"
     ]
     static func name(_ code: UInt16) -> String { names[code] ?? "Key \(code)" }
     static func button(_ button: Int) -> String {

@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     var session: AppSession
     @State private var moving = false
+    @State private var shortcuts = ShortcutBindings()
     private var store: WorkspaceStore { session.store }
     private var permissions: PermissionService { session.recorder.permissions }
     var body: some View {
@@ -36,13 +37,29 @@ struct SettingsView: View {
                     Toggle("Stop runs on human input by default", isOn: preference(\.stopOnHumanInput))
                 }
                 Surface(title: "Keyboard shortcuts", symbol: "keyboard") {
-                    LabeledContent("New recording", value: "⌘N")
-                    LabeledContent("Stop recording (in AgentTrainer)", value: "⇧⌘R")
-                    LabeledContent("Emergency stop (in AgentTrainer)", value: "⇧⌘Esc")
-                    Text("Global configurable shortcuts will be enabled with the run controller.").font(.caption).foregroundStyle(.secondary)
+                    ForEach(ShortcutAction.allCases) { action in
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text(action.title).frame(width: 170, alignment: .leading)
+                                Picker("Key", selection: $shortcuts[action].keyCode) {
+                                    ForEach(KeyNames.names.keys.sorted(), id: \.self) { Text(KeyNames.name($0)).tag(UInt32($0)) }
+                                }.frame(width: 150)
+                                Text(shortcuts[action].label).foregroundStyle(.secondary)
+                            }
+                            HStack {
+                                Toggle("Command", isOn: $shortcuts[action].command)
+                                Toggle("Shift", isOn: $shortcuts[action].shift)
+                                Toggle("Option", isOn: $shortcuts[action].option)
+                                Toggle("Control", isOn: $shortcuts[action].control)
+                            }.toggleStyle(.checkbox)
+                        }
+                    }
+                    Button("Apply shortcuts") { store.perform { try session.updateShortcuts(shortcuts); store.notice = "Global shortcuts updated." } }
+                        .disabled(!store.activeOperations.isEmpty)
+                    Text("Available while another app is active. Emergency stop releases agent input when a model is running.").font(.caption).foregroundStyle(.secondary)
                 }
             }.padding(30)
-        }.task { permissions.refresh() }
+        }.task { permissions.refresh(); shortcuts = store.preferences.shortcuts ?? ShortcutBindings() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in permissions.refresh() }
     }
 
@@ -75,7 +92,7 @@ struct SettingsView: View {
                     catch { store.error = error.localizedDescription }
                     moving = false
                 }
-            }.disabled(moving || session.recorder.isBusy)
+            }.disabled(store.migrating || !store.activeOperations.isEmpty)
         }
     }
 }

@@ -21,12 +21,16 @@ final class RecordingCoordinator {
 
     func start(name: String, instruction: String, folderID: UUID?, target: CaptureTarget, settings: RecordingSettings) async {
         guard phase == .idle else { return }
+        guard !store.migrating, store.activeOperations.isEmpty else { store.error = "Finish the active operation before recording."; return }
         guard let folder = store.folders.first(where: { $0.id == folderID }) else { store.error = "Choose a Library folder for this recording."; return }
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { store.error = "Give this recording a name."; return }
         permissions.refresh()
         guard permissions.screenRecording else { store.error = "Screen Recording permission is required. Enable it in Settings."; return }
         phase = .starting; preview = nil; errorDuringSession = nil
+        store.activeOperations.insert("recording")
         do {
+            await catalog.refresh()
+            guard phase == .starting else { return }
             let (resolved, parts) = try catalog.resolve(target, settings: settings)
             guard let bounds = resolved.globalBounds?.cgRect else { throw DataIntegrityError.invalidData("No capture bounds are available.") }
             let clock = SessionClock()
@@ -83,5 +87,6 @@ final class RecordingCoordinator {
         if let failure { store.error = failure }
         input = nil; visual = nil; journal = nil; clock = nil
         phase = .idle
+        store.activeOperations.remove("recording")
     }
 }

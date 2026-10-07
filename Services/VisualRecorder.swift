@@ -20,6 +20,7 @@ final class VisualRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     private var streamParts: [ObjectIdentifier: CapturePart] = [:]
     private var frames: [UInt32: Frame] = [:]
     private var generation: UInt64 = 0
+    private var sampledGenerations: [UInt32: UInt64] = [:]
     private var active = true
     private var timer: DispatchSourceTimer?
     private var lastGenerations: [UInt32: UInt64] = [:]
@@ -53,11 +54,13 @@ final class VisualRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     @MainActor func start(parts: [CapturePart]) async throws {
         do {
             for part in parts {
+                guard lock.withLock({ active }) else { throw CancellationError() }
                 let stream = SCStream(filter: part.filter, configuration: part.configuration, delegate: self)
                 lock.withLock { streamParts[ObjectIdentifier(stream)] = part }
                 try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: callbackQueue)
                 streams.append(stream)
                 try await stream.startCapture()
+                guard lock.withLock({ active }) else { throw CancellationError() }
             }
             startSampling()
         } catch { await stop(); throw error }
@@ -98,13 +101,27 @@ final class VisualRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         let sourceTime = displayTicks.map { clock.relative(absolute: SessionClock.nanoseconds(ticks: $0)) } ?? clock.now
         lock.withLock {
             guard active, let part = streamParts[ObjectIdentifier(stream)] else { return }
+            if let old = frames[part.id], old.generation > (sampledGenerations[part.id] ?? 0) { journal.noteDroppedVisualFrame() }
             generation += 1
-            frames[part.id] = Frame(buffer: buffer, time: sourceTime, generation: generation, bounds: part.globalBounds)
+            var frameBounds = part.globalBounds
+            if part.tracksWindowGeometry, let dictionary = info[.screenRect] as? NSDictionary,
+               let screenRect = CGRect(dictionaryRepresentation: dictionary as CFDictionary), screenRect.width > 0, screenRect.height > 0 {
+                frameBounds = screenRect
+                if let crop = part.crop { frameBounds = crop.offsetBy(dx: screenRect.minX, dy: screenRect.minY) }
+            }
+            frames[part.id] = Frame(buffer: buffer, time: sourceTime, generation: generation, bounds: frameBounds)
         }
     }
 
     private func sample() {
-        let snapshot = lock.withLock { (active, frames, streamParts.count) }
+        if input?.secureKeyboardInputActive == true {
+            fail("macOS Secure Input interrupted keyboard capture. Recording stopped to avoid missing transitions.")
+            return
+        }
+        let snapshot = lock.withLock {
+            if frames.count == streamParts.count { sampledGenerations = frames.mapValues(\.generation) }
+            return (active, frames, streamParts.count)
+        }
         guard snapshot.0 else { return }
         guard !snapshot.1.isEmpty, snapshot.1.count == snapshot.2 else {
             if clock.now > 10_000_000_000 { fail("The target did not provide a complete frame within 10 seconds.") }
@@ -112,6 +129,7 @@ final class VisualRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         }
         autoreleasepool {
             do {
+                let currentBounds = snapshot.1.values.reduce(CGRect.null) { $0.union($1.bounds) }
                 let changes = snapshot.1.mapValues(\.generation)
                 let changed = changes != lastGenerations
                 var preview: Data?
@@ -120,11 +138,11 @@ final class VisualRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
                     var composite = CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: rect)
                     for frame in snapshot.1.values {
                         let raw = CIImage(cvPixelBuffer: frame.buffer)
-                        let targetWidth = frame.bounds.width / bounds.width * Double(width)
-                        let targetHeight = frame.bounds.height / bounds.height * Double(height)
-                        let x = (frame.bounds.minX - bounds.minX) / bounds.width * Double(width)
+                        let targetWidth = frame.bounds.width / currentBounds.width * Double(width)
+                        let targetHeight = frame.bounds.height / currentBounds.height * Double(height)
+                        let x = (frame.bounds.minX - currentBounds.minX) / currentBounds.width * Double(width)
                         // CG display coordinates are top-left; CI coordinates are bottom-left.
-                        let y = (bounds.maxY - frame.bounds.maxY) / bounds.height * Double(height)
+                        let y = (currentBounds.maxY - frame.bounds.maxY) / currentBounds.height * Double(height)
                         let transformed = raw.transformed(by: CGAffineTransform(scaleX: targetWidth / raw.extent.width, y: targetHeight / raw.extent.height))
                             .transformed(by: CGAffineTransform(translationX: x, y: y))
                         composite = transformed.composited(over: composite)
@@ -143,10 +161,13 @@ final class VisualRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
                 guard let path = lastImageFile else { return }
                 // VisualObservation availability is stamped AFTER preprocessing and image persistence.
                 // Events during this work remain aligned to the previous observation.
-                let state = input?.snapshot ?? InputState()
+                var state = input?.snapshot ?? InputState()
+                // Cursor context remains available even when recording pointer
+                // movement as a target is disabled.
+                if let cursor = CGEvent(source: nil)?.location { state.cursorX = cursor.x; state.cursorY = cursor.y }
                 let available = max(clock.now, lastSourceTime)
                 try journal.append(observation: VisualObservation(id: index, timeNanoseconds: available, sourceTimeNanoseconds: lastSourceTime,
-                    imageFile: path, width: width, height: height, globalBounds: CaptureRect(bounds), state: state, reusedPixels: !changed))
+                    imageFile: path, width: width, height: height, globalBounds: CaptureRect(currentBounds), state: state, reusedPixels: !changed))
                 index += 1
                 try journal.checkpoint(at: available)
                 if available >= lastPreview + 500_000_000 {

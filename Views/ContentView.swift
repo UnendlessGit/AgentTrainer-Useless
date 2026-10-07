@@ -16,7 +16,7 @@ struct ContentView: View {
                 List(selection: $session.tab) {
                     Section("WORKSPACE") {
                         ForEach(AppTab.allCases.filter { $0 != .settings }) { tab in
-                            Label(tab.rawValue, systemImage: tab.symbol).tag(tab).padding(.vertical, 6)
+                            Label(tab.rawValue, systemImage: tab.symbol).tag(tab).padding(.vertical, 6).accessibilityIdentifier("tab.\(tab.id)")
                         }
                     }
                     Section {
@@ -35,8 +35,8 @@ struct ContentView: View {
                 switch session.tab {
                 case .record: RecordView(session: session)
                 case .library: LibraryView(store: session.store)
-                case .models: ModelsView(store: session.store)
-                case .train: TrainView(store: session.store)
+                case .models: ModelsView(store: session.store).disabled(session.trainer.isBusy || session.store.migrating)
+                case .train: TrainView(session: session)
                 case .run: RunView(session: session)
                 case .settings: SettingsView(session: session)
                 }

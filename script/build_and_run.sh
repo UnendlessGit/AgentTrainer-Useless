@@ -14,7 +14,7 @@ if [[ "$MODE" != --build && "$MODE" != --test ]]; then
 fi
 ACTION=build
 [[ "$MODE" == --test ]] && ACTION=test
-TEST_OPTIONS=()
+TEST_OPTIONS=(-quiet)
 if [[ "$MODE" == --test ]]; then
   TEST_OPTIONS=(-test-timeouts-enabled YES -default-test-execution-time-allowance 60 -maximum-test-execution-time-allowance 1200)
 fi

@@ -18,6 +18,8 @@ struct CapturePart: @unchecked Sendable {
     let filter: SCContentFilter
     let configuration: SCStreamConfiguration
     let globalBounds: CGRect
+    let tracksWindowGeometry: Bool
+    let crop: CGRect?
 }
 
 @MainActor @Observable
@@ -95,7 +97,8 @@ final class CaptureCatalog {
             config.colorSpaceName = CGColorSpace.sRGB
             config.ignoreShadowsSingleWindow = true
             if let crop { config.sourceRect = crop }
-            return CapturePart(id: id, filter: filter, configuration: config, globalBounds: bounds)
+            return CapturePart(id: id, filter: filter, configuration: config, globalBounds: bounds,
+                               tracksWindowGeometry: target.kind == .window || (target.kind == .region && target.windowID != nil), crop: crop)
         }
         return (resolved, result)
     }

@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import Carbon
 
 /// The event tap callback does no disk I/O. A bounded queue writes every accepted
 /// transition; overflow stops recording visibly instead of silently losing input.
@@ -23,8 +24,10 @@ final class InputCapture: @unchecked Sendable {
     }
 
     var snapshot: InputState { lock.withLock { state } }
+    var secureKeyboardInputActive: Bool { settings.keyboard && IsSecureEventInputEnabled() }
 
     @MainActor func start() throws {
+        guard !secureKeyboardInputActive else { throw DataIntegrityError.io("macOS Secure Input is active. Close the password field or secure-input application before recording keyboard actions.") }
         var initial = InputState()
         if settings.keyboard {
             initial.keys = Set((0...127).compactMap { CGEventSource.keyState(.combinedSessionState, key: CGKeyCode($0)) ? UInt16($0) : nil })

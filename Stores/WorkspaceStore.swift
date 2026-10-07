@@ -8,6 +8,8 @@ final class WorkspaceStore {
     private(set) var recordings: [RecordingItem] = []
     private(set) var models: [AIModel] = []
     private(set) var loading = false
+    var migrating = false
+    var activeOperations: Set<String> = []
     var error: String?
     var notice: String?
 
@@ -23,8 +25,8 @@ final class WorkspaceStore {
         let preferenceFile = self.supportURL.appendingPathComponent("preferences.json")
         if FileManager.default.fileExists(atPath: preferenceFile.path) {
             do { preferences = try AtomicFile.decode(AppPreferences.self, from: preferenceFile) }
-            catch { preferences = .defaults; self.error = "Preferences could not be read: \(error.localizedDescription)" }
-        } else { preferences = .defaults }
+            catch { preferences = .defaults(at: self.supportURL); self.error = "Preferences could not be read: \(error.localizedDescription)" }
+        } else { preferences = .defaults(at: self.supportURL) }
     }
 
     func load() async {
@@ -74,6 +76,7 @@ final class WorkspaceStore {
     }
 
     @discardableResult func createFolder(name: String, kind: LibraryKind, parentID: UUID? = nil) throws -> LibraryFolder {
+        try requireWritable()
         let clean = try validatedName(name)
         if let parentID { guard folders.contains(where: { $0.id == parentID && $0.kind == kind }) else { throw DataIntegrityError.invalidData("Choose a parent in the same library section.") } }
         guard !folders.contains(where: { $0.name.localizedCaseInsensitiveCompare(clean) == .orderedSame && $0.kind == kind && $0.parentID == parentID }) else {
@@ -87,6 +90,7 @@ final class WorkspaceStore {
     }
 
     func updateFolder(_ folder: LibraryFolder) throws {
+        try requireWritable()
         var changed = folder
         changed.name = try validatedName(folder.name)
         guard !folders.contains(where: { $0.id != changed.id && $0.parentID == changed.parentID && $0.kind == changed.kind && $0.name.localizedCaseInsensitiveCompare(changed.name) == .orderedSame }) else {
@@ -105,6 +109,7 @@ final class WorkspaceStore {
     }
 
     func deleteFolder(_ folder: LibraryFolder) throws {
+        try requireWritable()
         guard !recordings.contains(where: { $0.manifest.folderID == folder.id }), !folders.contains(where: { $0.parentID == folder.id }) else {
             throw DataIntegrityError.invalidData("Move the recordings and subfolders before deleting this folder.")
         }
@@ -114,6 +119,7 @@ final class WorkspaceStore {
     }
 
     func moveRecording(_ item: RecordingItem, to folderID: UUID) throws {
+        try requireWritable()
         guard let folder = folders.first(where: { $0.id == folderID }), folder.kind == item.manifest.kind else {
             throw DataIntegrityError.invalidData("Choose a folder in the same library section.")
         }
@@ -125,6 +131,7 @@ final class WorkspaceStore {
     }
 
     func editRecording(_ item: RecordingItem, edits: RecordingEdits) throws {
+        try requireWritable()
         if let name = edits.name { _ = try validatedName(name) }
         guard edits.trimStart.isFinite && edits.trimStart >= 0,
               (edits.trimEnd ?? item.manifest.duration).isFinite,
@@ -141,11 +148,14 @@ final class WorkspaceStore {
         model.id = UUID(); model.name = try validatedName(name); model.createdAt = Date(); model.modifiedAt = Date()
         // Duplication copies configuration/data selections, never claims ownership of another model's weights.
         model.checkpointFingerprint = nil; model.pretrainedCheckpoint = nil; model.trainedCheckpoint = nil
+        model.pretrainedFingerprint = nil; model.trainedFingerprint = nil
         try saveModel(model)
         return model
     }
 
     func saveModel(_ model: AIModel) throws {
+        try requireWritable()
+        try model.configuration.validate()
         var updated = model
         updated.name = try validatedName(model.name); updated.modifiedAt = Date()
         try AtomicFile.encode(updated, to: modelRoot.appendingPathComponent(model.id.uuidString + ".json"))
@@ -166,6 +176,10 @@ final class WorkspaceStore {
     }
 
     func perform(_ action: () throws -> Void) { do { try action() } catch { self.error = error.localizedDescription } }
+
+    func requireWritable() throws {
+        guard !migrating else { throw DataIntegrityError.io("Wait for the storage move to finish before changing the workspace.") }
+    }
 
     private func validatedName(_ name: String) throws -> String {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)

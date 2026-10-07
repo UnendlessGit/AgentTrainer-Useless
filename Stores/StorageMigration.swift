@@ -3,6 +3,10 @@ import CryptoKit
 
 extension WorkspaceStore {
     func relocateStorage(_ keyPath: WritableKeyPath<AppPreferences, String>, to destination: URL) async throws {
+        try requireWritable()
+        guard activeOperations.isEmpty else { throw DataIntegrityError.invalidData("Stop recording, training and runs before changing storage locations.") }
+        migrating = true
+        defer { migrating = false }
         let source = URL(fileURLWithPath: preferences[keyPath: keyPath]).standardizedFileURL.resolvingSymlinksInPath()
         let destination = destination.standardizedFileURL.resolvingSymlinksInPath()
         guard source != destination else { return }

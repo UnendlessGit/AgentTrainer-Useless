@@ -29,6 +29,7 @@ targets:
       - Services
       - Support
       - Core
+      - Learning
     dependencies:
       - package: MLX
         product: MLX
@@ -54,6 +55,15 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+  AgentTrainerUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources: [UITests]
+    dependencies:
+      - target: AgentTrainer
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   AgentTrainer:
     build:
@@ -62,3 +72,10 @@ schemes:
     test:
       targets:
         - AgentTrainerTests
+  AgentTrainerUI:
+    build:
+      targets:
+        AgentTrainer: all
+    test:
+      targets:
+        - AgentTrainerUITests
