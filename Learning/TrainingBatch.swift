@@ -96,8 +96,12 @@ enum PolicyLoss {
     }
 
     static func values(_ model: PolicyNetwork, _ arrays: [MLXArray], stage: TrainingStage) -> [MLXArray] {
-        func a(_ field: BatchField) -> MLXArray { arrays[field.rawValue] }
         let output = forward(model, arrays)
+        return [loss(output, arrays, stage: stage)] + output.hidden.map { stopGradient($0) }
+    }
+
+    static func loss(_ output: PolicyForward, _ arrays: [MLXArray], stage: TrainingStage) -> MLXArray {
+        func a(_ field: BatchField) -> MLXArray { arrays[field.rawValue] }
         let loss: MLXArray
         if stage == .pretraining {
             let valid = a(.valid) * a(.futureMask)
@@ -120,7 +124,35 @@ enum PolicyLoss {
             let perStep = action + 0.25 * timing + a(.pointerMask) * (spatial + 2 * offset) + a(.continuousMask) * arguments
             loss = sum(perStep * valid) / maximum(sum(valid), 1)
         }
-        // Only the first value is differentiated; subsequent values are auxiliaries.
-        return [loss] + output.hidden.map { stopGradient($0) }
+        return loss
+    }
+}
+
+/// Counts aggregate across recordings without averaging unequal-sized batches.
+/// Non-wait accuracy exposes a policy that achieves high accuracy by doing nothing.
+struct ActionEvaluation: Codable, Equatable, Sendable {
+    var correct = 0
+    var total = 0
+    var nonWaitCorrect = 0
+    var nonWaitTotal = 0
+    var nonWaitPredictions = 0
+    var accuracy: Double? { total > 0 ? Double(correct) / Double(total) : nil }
+    var nonWaitAccuracy: Double? { nonWaitTotal > 0 ? Double(nonWaitCorrect) / Double(nonWaitTotal) : nil }
+    var nonWaitPrecision: Double? { nonWaitPredictions > 0 ? Double(nonWaitCorrect) / Double(nonWaitPredictions) : nil }
+
+    mutating func add(_ other: Self) {
+        correct += other.correct; total += other.total; nonWaitCorrect += other.nonWaitCorrect
+        nonWaitTotal += other.nonWaitTotal; nonWaitPredictions += other.nonWaitPredictions
+    }
+
+    static func measure(logits: MLXArray, targets: MLXArray, valid: MLXArray, mask: MLXArray) -> Self {
+        let prediction = argMax(logits + mask, axis: -1)
+        let correct = (prediction .== targets).asType(.float32) * valid
+        // The shared codec always assigns token zero to wait.
+        let nonWait = (targets .!= 0).asType(.float32)
+        let counts = stacked([sum(correct), sum(valid), sum(correct * nonWait), sum(valid * nonWait),
+                              sum((prediction .!= 0).asType(.float32) * valid)]).asArray(Float.self)
+        return Self(correct: Int(counts[0]), total: Int(counts[1]), nonWaitCorrect: Int(counts[2]),
+                    nonWaitTotal: Int(counts[3]), nonWaitPredictions: Int(counts[4]))
     }
 }

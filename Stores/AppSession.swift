@@ -15,6 +15,7 @@ final class AppSession {
     let store: WorkspaceStore
     let recorder: RecordingCoordinator
     let trainer: TrainingCoordinator
+    let runner: RunCoordinator
     var recordingForm = RecordingForm()
     let shortcuts = GlobalShortcuts()
     private var shortcutsInstalled = false
@@ -29,6 +30,7 @@ final class AppSession {
         self.store = store
         recorder = RecordingCoordinator(store: store)
         trainer = TrainingCoordinator(store: store)
+        runner = RunCoordinator(store: store)
         let formURL = store.supportURL.appendingPathComponent("recording-form.json")
         if FileManager.default.fileExists(atPath: formURL.path) {
             do { recordingForm = try AtomicFile.decode(RecordingForm.self, from: formURL) }
@@ -45,9 +47,13 @@ final class AppSession {
         shortcuts.onAction = { [weak self] action in
             guard let self else { return }
             switch action {
-            case .recording: Task { await self.toggleRecording() }
-            case .run: self.tab = .run; self.store.notice = "Select a trained model and capture target in Run."
-            case .emergency: Task { await self.recorder.stop() }
+            case .recording: Task { await self.toggleRecording(fromShortcut: true) }
+            case .run:
+                if self.runner.isBusy { self.runner.stop() }
+                else { self.tab = .run; Task { await self.runner.start() } }
+            case .emergency:
+                self.runner.stop("Emergency stop.")
+                Task { await self.recorder.stop(trimControlGesture: true) }
             }
         }
         do { try shortcuts.install(store.preferences.shortcuts ?? ShortcutBindings()); shortcutsInstalled = true }
@@ -62,8 +68,8 @@ final class AppSession {
         shortcutsInstalled = true
     }
 
-    func toggleRecording() async {
-        if recorder.isBusy { await recorder.stop(); return }
+    func toggleRecording(fromShortcut: Bool = false) async {
+        if recorder.isBusy { await recorder.stop(trimControlGesture: fromShortcut); return }
         guard !trainer.isBusy else { store.error = "Pause training before recording a new demonstration."; return }
         if recordingForm.folderID == nil { recordingForm.folderID = store.folders.first(where: { $0.kind == .imitation })?.id }
         let form = recordingForm

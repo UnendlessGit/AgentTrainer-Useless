@@ -45,7 +45,8 @@ final class RecordingCoordinator {
                 Task { @MainActor in await self?.stop(failure: message) }
             }
             if capturesInput {
-                let input = InputCapture(clock: clock, settings: settings, onEvent: { try journal.append(event: $0) }, onFailure: failure)
+                let input = InputCapture(clock: clock, settings: settings, shortcuts: store.preferences.shortcuts ?? ShortcutBindings(),
+                                         onEvent: { try journal.append(event: $0) }, onFailure: failure)
                 self.input = input
                 try input.start()
                 manifest.initialInputState = input.snapshot
@@ -71,7 +72,7 @@ final class RecordingCoordinator {
         }
     }
 
-    func stop(failure: String? = nil) async {
+    func stop(failure: String? = nil, trimControlGesture: Bool = false) async {
         guard phase != .idle && phase != .stopping else { return }
         phase = .stopping; errorDuringSession = failure
         await input?.stop()
@@ -81,6 +82,14 @@ final class RecordingCoordinator {
                 try journal.finish(at: clock.now, failure: failure)
                 manifest = journal.snapshot
                 store.upsertRecording(journal.snapshot, url: journal.url)
+                if trimControlGesture, failure == nil, let boundary = input?.controlGestureBoundary,
+                   boundary > 0, boundary < journal.snapshot.durationNanoseconds,
+                   let item = store.recordings.first(where: { $0.id == journal.snapshot.id }) {
+                    var edits = item.edits
+                    edits.trimEnd = Double(boundary - 1) / 1e9
+                    edits.automaticTrimReason = "Recording-control shortcut excluded. Original input events remain preserved."
+                    try store.editRecording(item, edits: edits)
+                }
                 if failure == nil { store.notice = "Saved “\(journal.snapshot.name)” to Library." }
             } catch { store.error = "Could not finalize this recording. Its journal is recoverable: \(error.localizedDescription)" }
         }

@@ -96,6 +96,10 @@ final class CaptureCatalog {
             config.pixelFormat = kCVPixelFormatType_32BGRA
             config.colorSpaceName = CGColorSpace.sRGB
             config.ignoreShadowsSingleWindow = true
+            // Fill the configured buffer. The shared compositor maps it back to
+            // the current source bounds, including a resized window's aspect ratio.
+            config.scalesToFit = true
+            config.preservesAspectRatio = false
             if let crop { config.sourceRect = crop }
             return CapturePart(id: id, filter: filter, configuration: config, globalBounds: bounds,
                                tracksWindowGeometry: target.kind == .window || (target.kind == .region && target.windowID != nil), crop: crop)

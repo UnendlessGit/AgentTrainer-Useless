@@ -5,6 +5,19 @@ import MLXRandom
 @testable import AgentTrainer
 
 final class PolicyNetworkTests: XCTestCase {
+    func testHeldOutMetricsExposeWaitCollapseAndExcludePadding() {
+        let logits = MLXArray([Float(9), 1, 0, 9, 1, 0, 9, 1, 0, 9, 1, 0], [1, 4, 3])
+        let targets = MLXArray([Int32(0), 1, 2, 0], [1, 4])
+        let valid = MLXArray([Float(1), 1, 1, 0], [1, 4])
+        let mask = MLXArray([Float(0), 0, 0, 0, 0, 0, -1e9, -1e9, 0, 0, 0, 0], [1, 4, 3])
+        let result = ActionEvaluation.measure(logits: logits, targets: targets, valid: valid, mask: mask)
+        XCTAssertEqual(result.total, 3); XCTAssertEqual(result.correct, 2)
+        XCTAssertEqual(result.nonWaitTotal, 2); XCTAssertEqual(result.nonWaitCorrect, 1)
+        XCTAssertEqual(result.nonWaitPredictions, 1)
+        XCTAssertEqual(result.nonWaitAccuracy, 0.5); XCTAssertEqual(result.nonWaitPrecision, 1)
+        XCTAssertNil(ActionEvaluation().accuracy)
+    }
+
     private func configuration(_ architecture: TemporalArchitecture) -> PolicyConfiguration {
         var c = PolicyConfiguration()
         c.imageSize = 128; c.visualWidth = 64; c.visualDepth = 2

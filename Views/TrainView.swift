@@ -32,10 +32,13 @@ struct TrainView: View {
                             Stepper("Epochs: \(trainer.settings.epochs)", value: $trainer.settings.epochs, in: 1...1000)
                             Picker("Batch size", selection: $trainer.settings.batchSize) { ForEach([1, 2, 4, 8], id: \.self) { Text("\($0) sequences").tag($0) } }
                             TextField("Learning rate", value: $trainer.settings.learningRate, format: .number.precision(.fractionLength(1...6)))
+                                .accessibilityLabel("Learning rate").accessibilityIdentifier("training.learningRate")
                             TextField("Weight decay", value: $trainer.settings.weightDecay, format: .number.precision(.fractionLength(0...4)))
+                                .accessibilityLabel("Weight decay").accessibilityIdentifier("training.weightDecay")
                         }
                         VStack(alignment: .leading, spacing: 14) {
                             TextField("Gradient clip", value: $trainer.settings.gradientClip, format: .number)
+                                .accessibilityLabel("Gradient clip").accessibilityIdentifier("training.gradientClip")
                             Stepper("Checkpoint every \(trainer.settings.checkpointInterval) steps", value: $trainer.settings.checkpointInterval, in: 1...1000)
                             Picker("Held-out recordings", selection: $trainer.settings.validationFraction) {
                                 Text("None · training loss only").tag(0.0); Text("20%").tag(0.2); Text("30%").tag(0.3)
@@ -58,9 +61,9 @@ struct TrainView: View {
             HStack {
                 Button(stage == .pretraining ? "Pre-train" : "Train") {
                     if let model { trainer.start(model: model, stage: stage) }
-                }.buttonStyle(.borderedProminent).disabled(model == nil || count == 0 || trainer.isBusy || session.recorder.isBusy)
+                }.buttonStyle(.borderedProminent).disabled(model == nil || count == 0 || !store.activeOperations.isEmpty || store.migrating)
                 Button("Resume") { if let model { trainer.resume(model: model, stage: stage) } }
-                    .disabled(model == nil || trainer.isBusy || session.recorder.isBusy || (stage == .pretraining ? model?.pretrainedCheckpoint : model?.trainedCheckpoint) == nil)
+                    .disabled(model == nil || !store.activeOperations.isEmpty || store.migrating || (stage == .pretraining ? model?.pretrainedCheckpoint : model?.trainedCheckpoint) == nil)
             }
             Text(stage == .imitation && model?.pretrainingCompatible == true ? "New training starts from your pre-trained checkpoint." : "Starts from new weights; previous checkpoints are preserved.")
                 .font(.caption).foregroundStyle(.secondary)
@@ -96,6 +99,15 @@ struct TrainView: View {
                     }
                 }.chartForegroundStyleScale(["Training": Color.blue, "Validation": Color.orange]).frame(height: 160)
             }
+            if let evaluation = p.actionEvaluation {
+                HStack(spacing: 25) {
+                    Metric(title: "HELD-OUT ACTION ACCURACY", value: percentage(evaluation.accuracy))
+                    Metric(title: "NON-WAIT ACCURACY", value: percentage(evaluation.nonWaitAccuracy))
+                    Metric(title: "NON-WAIT PRECISION", value: percentage(evaluation.nonWaitPrecision))
+                }
+                Text("\(evaluation.total.formatted()) held-out decisions, including \(evaluation.nonWaitTotal.formatted()) non-wait actions. Evaluation uses recorded history; use Run to verify closed-loop behavior.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             HStack(spacing: 25) {
                 Metric(title: "STEPS / SECOND", value: String(format: "%.2f", p.stepsPerSecond))
                 Metric(title: "MLX ACTIVE / CACHE", value: "\(bytes(p.activeMemory)) / \(bytes(p.cacheMemory))")
@@ -112,5 +124,6 @@ struct TrainView: View {
     }
 
     private func number(_ value: Float?) -> String { value.map { String(format: "%.4f", $0) } ?? "—" }
+    private func percentage(_ value: Double?) -> String { value.map { String(format: "%.1f%%", $0 * 100) } ?? "—" }
     private func bytes(_ value: Int) -> String { ByteCountFormatter.string(fromByteCount: Int64(value), countStyle: .memory) }
 }

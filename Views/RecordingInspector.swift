@@ -60,6 +60,7 @@ struct RecordingInspector: View {
                 Form {
                     Section("Metadata") { TextField("Name", text: $name); TextField("Instruction", text: $instruction, axis: .vertical) }
                     Section("Nondestructive trim") {
+                        if let reason = item.edits.automaticTrimReason { Text(reason).font(.caption).foregroundStyle(.secondary) }
                         TextField("Start (seconds)", value: $trimStart, format: .number)
                         TextField("End (seconds)", value: $trimEnd, format: .number)
                         Text("Original pixels and events are preserved.").font(.caption).foregroundStyle(.secondary)

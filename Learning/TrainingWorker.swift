@@ -25,6 +25,7 @@ struct TrainingProgress: Sendable {
     var excludedOutsideTarget = 0
     var loss: Float?
     var validationLoss: Float?
+    var actionEvaluation: ActionEvaluation?
     var gradientNorm: Float?
     var learningRate: Float = 0
     var stepsPerSecond = 0.0
@@ -119,6 +120,7 @@ enum TrainingWorker {
                 }
                 epoch = saved.epoch; cursor = saved.sampleCursor; step = saved.step
                 lastLoss = saved.trainingLoss; validationLoss = saved.validationLoss; bestLoss = saved.bestValidationLoss
+                progress.actionEvaluation = saved.actionEvaluation
                 progress.checkpoint = saved.id
                 guard epoch < request.settings.epochs else { throw DataIntegrityError.invalidData("This run already completed all epochs. Start a new run to train again.") }
             } else if request.stage == .imitation && request.model.pretrainingCompatible {
@@ -167,7 +169,9 @@ enum TrainingWorker {
                     trainingRecordingIDs: dataset.training.map { $0.item.id }, validationRecordingIDs: dataset.validation.map { $0.item.id },
                     stage: request.stage, settings: request.settings, step: step, epoch: epoch, sampleCursor: cursor,
                     trainingLoss: lastLoss, validationLoss: validationLoss, bestValidationLoss: bestLoss)
-                let saved = try checkpoints.save(manifest, isBest: isBest) { directory in
+                var evaluatedManifest = manifest
+                evaluatedManifest.actionEvaluation = progress.actionEvaluation
+                let saved = try checkpoints.save(evaluatedManifest, isBest: isBest) { directory in
                     try MLX.save(arrays: Dictionary(uniqueKeysWithValues: model.parameters().flattened()), url: directory.appendingPathComponent("weights.safetensors"))
                     var state = optimizer.arrays()
                     for (index, value) in hidden.enumerated() { state["carry.\(index)"] = value }
@@ -187,24 +191,34 @@ enum TrainingWorker {
                     let validationSchedule = SequenceSchedule(recordings: dataset.validation, batchSize: request.settings.batchSize,
                         sequenceLength: model.configuration.sequenceLength, seed: request.settings.seed)
                     var weightedLoss: Double = 0, examples = 0, validationHidden: [MLXArray] = []
+                    var evaluation = ActionEvaluation()
                     model.train(false)
                     for index in 0..<validationSchedule.count {
                         if control.current != .run || Date() >= deadline { break }
                         report(.validating, "Evaluating held-out recordings · \(index + 1)/\(validationSchedule.count)")
                         guard let plan = validationSchedule.plan(at: index) else { break }
                         if plan.resetsMemory { validationHidden = [] }
-                        let batch = try TrainingBatch.load(plan: plan, configuration: model.configuration, checkCancellation: {})
-                        let values = PolicyLoss.values(model, batch.arrays + validationHidden, stage: stage)
-                        eval(values)
-                        let value = values[0].item(Float.self)
-                        guard value.isFinite else { throw DataIntegrityError.invalidData("Validation loss became non-finite. The previous checkpoint remains available.") }
-                        weightedLoss += Double(value) * Double(batch.validCount); examples += batch.validCount
-                        validationHidden = Array(values.dropFirst())
+                        try autoreleasepool {
+                            let batch = try TrainingBatch.load(plan: plan, configuration: model.configuration, checkCancellation: {})
+                            let output = PolicyLoss.forward(model, batch.arrays + validationHidden)
+                            let loss = PolicyLoss.loss(output, batch.arrays, stage: stage)
+                            validationHidden = output.hidden.map { stopGradient($0) }
+                            eval(loss, validationHidden)
+                            let value = loss.item(Float.self)
+                            guard value.isFinite else { throw DataIntegrityError.invalidData("Validation loss became non-finite. The previous checkpoint remains available.") }
+                            weightedLoss += Double(value) * Double(batch.validCount); examples += batch.validCount
+                            if stage == .imitation {
+                                evaluation.add(ActionEvaluation.measure(logits: output.actionLogits,
+                                    targets: batch.arrays[BatchField.actions.rawValue], valid: batch.arrays[BatchField.valid.rawValue],
+                                    mask: batch.arrays[BatchField.actionMask.rawValue]))
+                            }
+                        }
                     }
                     model.train(true)
                     // Only a complete held-out pass can select the best checkpoint.
                     let validationComplete = examples > 0 && control.current == .run && Date() < deadline
                     validationLoss = validationComplete ? Float(weightedLoss / Double(examples)) : nil
+                    progress.actionEvaluation = validationComplete && stage == .imitation ? evaluation : nil
                     let improved = validationLoss.map { $0 < (bestLoss ?? .infinity) } ?? false
                     if improved { bestLoss = validationLoss }
                     progress.history.append(LossPoint(step: step, training: lastLoss, validation: validationLoss))

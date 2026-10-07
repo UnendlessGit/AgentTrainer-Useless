@@ -44,6 +44,7 @@ struct CheckpointManifest: Codable, Sendable {
     var trainingLoss: Float
     var validationLoss: Float?
     var bestValidationLoss: Float?
+    var actionEvaluation: ActionEvaluation?
     var createdAt = Date()
     var files: [String: String] = [:]
 }

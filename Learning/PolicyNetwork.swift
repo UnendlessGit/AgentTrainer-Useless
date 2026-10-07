@@ -118,14 +118,14 @@ final class PolicyNetwork: Module {
     /// training and inference. GRU hidden carries are explicit, never global state.
     func callAsFunction(images: MLXArray, crops: MLXArray?, context: MLXArray, previousActions: MLXArray,
                         instructions: MLXArray, dynamicsActions: MLXArray, dynamicsArguments: MLXArray,
-                        hidden: [MLXArray] = []) -> PolicyForward {
+                        hidden: [MLXArray] = [], encodedVision: MLXArray? = nil, encodedDetail: MLXArray? = nil) -> PolicyForward {
         let batch = images.dim(0), length = images.dim(1), n = batch * length
         let c = configuration, patches = vision.gridSize * vision.gridSize
-        let tokens = vision(images.reshaped([n, c.imageSize, c.imageSize, 3]))
+        let tokens = encodedVision ?? vision(images.reshaped([n, c.imageSize, c.imageSize, 3]))
         var features = [mean(tokens, axis: 1).reshaped([batch, length, c.visualWidth]), gelu(contextProjection(context)), previousActionEmbedding(previousActions)]
         if c.detailCrop, let crops {
-            let detail = vision(crops.reshaped([n, c.imageSize, c.imageSize, 3]))
-            features.append(mean(detail, axis: 1).reshaped([batch, length, c.visualWidth]))
+            let detail = encodedDetail ?? mean(vision(crops.reshaped([n, c.imageSize, c.imageSize, 3])), axis: 1)
+            features.append(detail.reshaped([batch, length, c.visualWidth]))
         }
         if c.instructionConditioning {
             // Instructions are fixed for a recording/run. Encode once per lane,

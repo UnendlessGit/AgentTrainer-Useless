@@ -18,10 +18,13 @@ struct AgentTrainerApp: App {
                 Button("New recording") { session.tab = .record }.keyboardShortcut("n")
             }
             CommandMenu("Session") {
-                Button("Stop recording") { Task { await session.recorder.stop() } }
-                    .keyboardShortcut("r", modifiers: [.command, .shift]).disabled(!session.recorder.isBusy)
-                Button("Emergency stop") { Task { await session.recorder.stop() } }
-                    .keyboardShortcut(.escape, modifiers: [.command, .shift])
+                Button("Start / stop recording · \((session.store.preferences.shortcuts ?? ShortcutBindings()).recording.label)") {
+                    Task { await session.toggleRecording() }
+                }
+                Button("Emergency stop · \((session.store.preferences.shortcuts ?? ShortcutBindings()).emergency.label)") {
+                    session.runner.stop("Emergency stop.")
+                    Task { await session.recorder.stop() }
+                }
             }
         }
         Settings { SettingsView(session: session).frame(width: 760, height: 700) }
@@ -39,13 +42,14 @@ struct AgentTrainerApp: App {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let session else { return .terminateNow }
         session.saveRecordingForm()
-        guard session.recorder.isBusy || session.trainer.isBusy || session.store.migrating else { session.shortcuts.stop(); return .terminateNow }
+        guard session.recorder.isBusy || session.trainer.isBusy || session.runner.isBusy || session.store.migrating else { session.shortcuts.stop(); return .terminateNow }
         guard !terminating else { return .terminateLater }
         terminating = true
         session.trainer.pause()
+        session.runner.stop("Application is quitting.")
         Task { @MainActor in
             await session.recorder.stop()
-            while session.trainer.isBusy || session.store.migrating { try? await Task.sleep(for: .milliseconds(100)) }
+            while session.trainer.isBusy || session.runner.isBusy || session.store.migrating { try? await Task.sleep(for: .milliseconds(100)) }
             session.shortcuts.stop()
             sender.reply(toApplicationShouldTerminate: true)
         }

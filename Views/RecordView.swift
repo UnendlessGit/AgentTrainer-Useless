@@ -15,7 +15,7 @@ struct RecordView: View {
                         Button(action: start) { Label("Start recording", systemImage: "record.circle") }
                             .buttonStyle(.borderedProminent).controlSize(.large)
                             .accessibilityLabel("Start recording").accessibilityIdentifier("record.start")
-                            .disabled(recorder.catalog.loading || session.trainer.isBusy || session.store.migrating)
+                            .disabled(recorder.catalog.loading || !session.store.activeOperations.isEmpty || session.store.migrating)
                     }
                 }
                 HStack(alignment: .top, spacing: 22) {

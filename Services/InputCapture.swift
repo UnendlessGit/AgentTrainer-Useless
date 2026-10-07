@@ -12,18 +12,21 @@ final class InputCapture: @unchecked Sendable {
     private var source: CFRunLoopSource?
     private var state = InputState()
     private var active = false
+    private var controlGesture: ControlGestureTracker
     private let clock: SessionClock
     private let settings: RecordingSettings
     private let onEvent: @Sendable (InputTransition) throws -> Void
     private let onFailure: @Sendable (String) -> Void
 
-    init(clock: SessionClock, settings: RecordingSettings,
+    init(clock: SessionClock, settings: RecordingSettings, shortcuts: ShortcutBindings = ShortcutBindings(),
          onEvent: @escaping @Sendable (InputTransition) throws -> Void,
          onFailure: @escaping @Sendable (String) -> Void) {
         self.clock = clock; self.settings = settings; self.onEvent = onEvent; self.onFailure = onFailure
+        controlGesture = ControlGestureTracker(bindings: [shortcuts.recording, shortcuts.emergency])
     }
 
     var snapshot: InputState { lock.withLock { state } }
+    var controlGestureBoundary: UInt64? { lock.withLock { controlGesture.boundary } }
     var secureKeyboardInputActive: Bool { settings.keyboard && IsSecureEventInputEnabled() }
 
     @MainActor func start() throws {
@@ -96,11 +99,13 @@ final class InputCapture: @unchecked Sendable {
         default: break
         }
         guard let action else { return }
+        let time = clock.relative(absolute: event.timestamp)
         lock.withLock {
+            controlGesture.observe(action: action, flags: event.flags.rawValue, time: time)
             state.apply(action)
             state.cursorX = event.location.x; state.cursorY = event.location.y
         }
-        let transition = InputTransition(id: 0, timeNanoseconds: clock.relative(absolute: event.timestamp), action: action,
+        let transition = InputTransition(id: 0, timeNanoseconds: time, action: action,
                                          isRepeat: type == .keyDown && event.getIntegerValueField(.keyboardEventAutorepeat) != 0,
                                          modifiers: event.flags.rawValue, cursorX: event.location.x, cursorY: event.location.y,
                                          rawDeltaX: event.getIntegerValueField(.mouseEventDeltaX),

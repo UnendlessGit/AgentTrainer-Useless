@@ -106,6 +106,7 @@ struct RecordingEdits: Codable, Equatable, Sendable {
     var trimStart: Double = 0
     var trimEnd: Double?
     var excluded = false
+    var automaticTrimReason: String?
 }
 
 struct RecordingItem: Identifiable, Sendable {

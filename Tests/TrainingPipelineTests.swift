@@ -90,6 +90,8 @@ final class TrainingPipelineTests: XCTestCase {
             control: TrainingControl(), publish: resumed.append, checkpointSaved: { _ in })
         XCTAssertEqual(resumed.last?.phase, .complete, resumed.last?.message ?? "Missing progress")
         XCTAssertNotNil(resumed.last?.validationLoss)
+        XCTAssertEqual(resumed.last?.actionEvaluation?.total, 11)
+        XCTAssertEqual(resumed.last?.actionEvaluation?.nonWaitTotal, 10)
         let checkpoints = CheckpointStore(root: URL(fileURLWithPath: preferences.checkpointsPath))
         let resumedCheckpoint = try XCTUnwrap(checkpoints.latest(modelID: model.id, stage: .imitation, configuration: model.configuration))
         let resumedWeights = try MLX.loadArrays(url: resumedCheckpoint.1.appendingPathComponent("weights.safetensors"))
