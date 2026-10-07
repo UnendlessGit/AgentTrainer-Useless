@@ -100,6 +100,7 @@ final class RunCoordinator {
                     DispatchQueue.main.async { [self] in
                         guard generation == id else { return }
                         progress = update
+                        if phase != .running { progress.heldInput = executor.state }
                         if let scene { preview = NSImage(cgImage: scene.image, size: NSSize(width: scene.image.width, height: scene.image.height)) }
                     }
                 }, finished: { reason in
@@ -121,6 +122,7 @@ final class RunCoordinator {
     func stop(_ reason: String = "Stopped by you.") {
         guard isBusy else { return }
         executor?.stop(reason); phase = .stopping; message = reason
+        progress.heldInput = executor?.state ?? progress.heldInput
         if !workerRunning {
             let id = generation
             Task { await finish(id: id, reason: reason) }
@@ -132,6 +134,7 @@ final class RunCoordinator {
         executor?.stop(reason); watchdog?.stop(); watchdog = nil
         await monitor?.stop(); await capture?.stop()
         guard generation == id else { return }
+        progress.heldInput = executor?.state ?? progress.heldInput
         monitor = nil; capture = nil; executor = nil
         phase = .stopped; message = reason; store.activeOperations.remove("run")
     }

@@ -69,6 +69,28 @@ final class TrainingPipelineTests: XCTestCase {
             root: root.appendingPathComponent("invalid"), checkCancellation: {}, progress: { _ in }))
     }
 
+    func testOmittingFutureImageWorkPreservesImitationLossAndGradients() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let item = try recording(root: root), c = configuration()
+        let dataset = try PreparedDataset.prepare(items: [item], configuration: c, settings: TrainingSettings(), stage: .imitation,
+            root: root.appendingPathComponent("index"), checkCancellation: {}, progress: { _ in })
+        let plan = SequenceBatchPlan(recordings: dataset.training, chunk: 0)
+        let full = try TrainingBatch.load(plan: plan, configuration: c, stage: .pretraining, checkCancellation: {})
+        let imitation = try TrainingBatch.load(plan: plan, configuration: c, stage: .imitation, checkCancellation: {})
+        let model = PolicyNetwork(configuration: c)
+        let lossGradient = valueAndGrad(model: model) { model, arrays in PolicyLoss.values(model, arrays, stage: .imitation) }
+        let (fullLoss, fullGradients) = lossGradient(model, full.arrays)
+        let (imitationLoss, imitationGradients) = lossGradient(model, imitation.arrays)
+        XCTAssertEqual(fullLoss[0].item(Float.self), imitationLoss[0].item(Float.self), accuracy: 1e-6)
+        let expected = Dictionary(uniqueKeysWithValues: fullGradients.flattened())
+        for (name, gradient) in imitationGradients.flattened() {
+            XCTAssertLessThanOrEqual(max(abs(gradient - expected[name]!)).item(Float.self), 1e-6, name)
+        }
+        XCTAssertGreaterThan(sum(abs(full.arrays[BatchField.futurePixels.rawValue])).item(Float.self), 0)
+        XCTAssertEqual(sum(abs(imitation.arrays[BatchField.futurePixels.rawValue])).item(Float.self), 0)
+    }
+
     func testWorkerPauseResumeMatchesUninterruptedTrainingAndSavesValidation() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

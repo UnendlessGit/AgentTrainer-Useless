@@ -32,7 +32,7 @@ struct TrainingProgress: Sendable {
     var stepsPerSecond = 0.0
     var activeMemory = 0
     var cacheMemory = 0
-    var residentMemory: UInt64 = 0
+    var physicalFootprint: UInt64?
     var cpuPercent = 0.0
     var elapsedSeconds = 0.0
     var checkpoint: UUID?
@@ -156,7 +156,7 @@ enum TrainingWorker {
                 progress.epoch = epoch; progress.cursor = cursor; progress.stepsPerEpoch = schedule.count
                 progress.loss = step > 0 ? lastLoss : nil; progress.validationLoss = validationLoss
                 progress.activeMemory = Memory.activeMemory; progress.cacheMemory = Memory.cacheMemory
-                progress.residentMemory = residentBytes(); progress.elapsedSeconds = Date().timeIntervalSince(started)
+                progress.physicalFootprint = footprintBytes(); progress.elapsedSeconds = Date().timeIntervalSince(started)
                 let now = Date(), cpu = processCPUSeconds(), interval = now.timeIntervalSince(sampleTime)
                 if interval > 0.25 { progress.cpuPercent = max(0, (cpu - sampleCPU) / interval * 100); sampleCPU = cpu; sampleTime = now }
                 progress.stepsPerSecond = Double(completedThisRun) / max(0.001, progress.elapsedSeconds)
@@ -203,7 +203,7 @@ enum TrainingWorker {
                         guard let plan = validationSchedule.plan(at: index) else { break }
                         if plan.resetsMemory { validationHidden = [] }
                         try autoreleasepool {
-                            let batch = try TrainingBatch.load(plan: plan, configuration: model.configuration, checkCancellation: {})
+                            let batch = try TrainingBatch.load(plan: plan, configuration: model.configuration, stage: stage, checkCancellation: {})
                             let output = PolicyLoss.forward(model, batch.arrays + validationHidden)
                             let loss = PolicyLoss.loss(output, batch.arrays, stage: stage)
                             validationHidden = output.hidden.map { stopGradient($0) }
@@ -235,7 +235,7 @@ enum TrainingWorker {
                 if plan.resetsMemory { hidden = [] }
                 report(.training, stage == .pretraining ? "Learning action-conditioned visual dynamics" : "Learning demonstrated actions and timing")
                 try autoreleasepool {
-                    let batch = try TrainingBatch.load(plan: plan, configuration: model.configuration, checkCancellation: {})
+                    let batch = try TrainingBatch.load(plan: plan, configuration: model.configuration, stage: stage, checkCancellation: {})
                     let (values, gradients) = lossGradient(model, batch.arrays + hidden)
                     let loss = values[0].item(Float.self)
                     guard loss.isFinite else { throw DataIntegrityError.invalidData("Training loss became non-finite. Reduce the learning rate and start from a valid checkpoint.") }
@@ -274,11 +274,11 @@ enum TrainingWorker {
         var usage = rusage(); getrusage(RUSAGE_SELF, &usage)
         return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1e6
     }
-    private static func residentBytes() -> UInt64 {
-        var info = mach_task_basic_info(), count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+    private static func footprintBytes() -> UInt64? {
+        var info = task_vm_info_data_t(), count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
         let result = withUnsafeMutablePointer(to: &info) { pointer in
-            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count) }
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
         }
-        return result == KERN_SUCCESS ? info.resident_size : 0
+        return result == KERN_SUCCESS ? info.phys_footprint : nil
     }
 }

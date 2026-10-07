@@ -27,13 +27,9 @@ struct RunTargetGuard: Sendable {
             guard let focused = focusedWindowBounds(pid: pid, rejectingSheets: true), nearlyEqual(focused, bounds) else {
                 throw DataIntegrityError.invalidData("Another window or dialog has keyboard focus. The run stopped.")
             }
-            if let point = Self.pointerDestination(action, state: state) {
-                for candidate in windows {
-                    if (candidate[kCGWindowNumber as String] as? NSNumber)?.uint32Value == windowID { break }
-                    guard ((candidate[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) > 0.01,
-                          let candidateBounds = rectangle(candidate), candidateBounds.contains(point) else { continue }
-                    throw DataIntegrityError.invalidData("Another window covers the pointer destination. The run stopped.")
-                }
+            if let point = Self.pointerDestination(action, state: state),
+               Self.pointerObstruction(in: windows, targetWindowID: windowID, point: point) != nil {
+                throw DataIntegrityError.invalidData("Another window covers the pointer destination. The run stopped.")
             }
             if let crop = target.region, target.kind == .region,
                !CGRect(origin: .zero, size: bounds.size).contains(crop.cgRect) {
@@ -70,6 +66,21 @@ struct RunTargetGuard: Sendable {
         case .buttonDown, .scroll: return CGPoint(x: state.cursorX, y: state.cursorY)
         default: return nil
         }
+    }
+
+    static func pointerObstruction(in windows: [[String: Any]], targetWindowID: UInt32, point: CGPoint) -> [String: Any]? {
+        for candidate in windows {
+            if (candidate[kCGWindowNumber as String] as? NSNumber)?.uint32Value == targetWindowID { return nil }
+            // macOS exposes the hardware cursor as a Window Server window. It
+            // follows every pointer move but cannot intercept the ensuing click.
+            // Exempt only the system cursor level; menus and panels still block.
+            if (candidate[kCGWindowLayer as String] as? NSNumber)?.int32Value == CGWindowLevelForKey(.cursorWindow) { continue }
+            guard ((candidate[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) > 0.01,
+                  let dictionary = candidate[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: dictionary as CFDictionary), bounds.contains(point) else { continue }
+            return candidate
+        }
+        return nil
     }
 
     private func nearlyEqual(_ a: CGRect, _ b: CGRect) -> Bool {

@@ -12,7 +12,7 @@ struct TrainingBatch {
     var arrays: [MLXArray]
     var validCount: Int
 
-    static func load(plan: SequenceBatchPlan, configuration c: PolicyConfiguration,
+    static func load(plan: SequenceBatchPlan, configuration c: PolicyConfiguration, stage: TrainingStage,
                      checkCancellation: () throws -> Void) throws -> TrainingBatch {
         let codec = PolicyActionCodec(capabilities: c.capabilities), length = c.sequenceLength
         var images: [MLXArray] = [], crops: [MLXArray] = [], future: [MLXArray] = []
@@ -64,7 +64,7 @@ struct TrainingBatch {
                 if case .pointer = row.targetAction { pointer.append(1) } else { pointer.append(0) }
                 switch row.targetAction { case .relativePointer, .scroll: continuous.append(1); default: continuous.append(0) }
                 valid.append(1); count += 1
-                if let next = row.nextObservation {
+                if stage == .pretraining, let next = row.nextObservation {
                     future.append(try read(next.imageFile).1)
                     // A non-static capture whose pixels precede the action is not
                     // evidence of that action's outcome.
@@ -82,7 +82,8 @@ struct TrainingBatch {
             MLXArray(previous, [b, t]), MLXArray(instructions, [b, t, PolicyNetwork.instructionLength]), MLXArray(actions, [b, t]),
             MLXArray(arguments, [b, t, 2]), MLXArray(delays, [b, t]), MLXArray(spatial, [b, t]), MLXArray(offsets, [b, t, 2]),
             MLXArray(pointer, [b, t]), MLXArray(continuous, [b, t]), MLXArray(valid, [b, t]), MLXArray(masks, [b, t, codec.count]),
-            patchPixels(stacked(future).reshaped(imageShape)), patchPixels(imageArray), MLXArray(futureMask, [b, t])]
+            stage == .pretraining ? patchPixels(stacked(future).reshaped(imageShape)) : MLXArray.zeros([b, t, grid * grid, 3]),
+            stage == .pretraining ? patchPixels(imageArray) : MLXArray.zeros([b, t, grid * grid, 3]), MLXArray(futureMask, [b, t])]
         return TrainingBatch(arrays: arrays, validCount: count)
     }
 }

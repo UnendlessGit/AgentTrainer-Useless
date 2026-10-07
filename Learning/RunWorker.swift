@@ -18,6 +18,7 @@ enum RunWorker {
         var started: UInt64?
         defer {
             if let started { progress.elapsed = Double(clock.now - min(clock.now, started)) / 1e9 }
+            progress.heldInput = executor.state
             publish(progress, nil)
             Memory.clearCache(); finished(executor.stopReason ?? "Run stopped.")
         }
@@ -51,6 +52,7 @@ enum RunWorker {
                         progress.waitingForHuman = true
                         if clock.now >= lastPublish + 250_000_000 {
                             progress.elapsed = Double(clock.now - start) / 1e9
+                            progress.heldInput = executor.state
                             publish(progress, nil); lastPublish = clock.now
                         }
                         Thread.sleep(forTimeInterval: 0.01); return
@@ -82,6 +84,7 @@ enum RunWorker {
                     if progress.history.count > 80 { progress.history.removeFirst(progress.history.count - 80) }
                     if clock.now >= lastPublish + 250_000_000 {
                         progress.activeMemory = Memory.activeMemory; progress.cacheMemory = Memory.cacheMemory
+                        progress.heldInput = executor.state
                         publish(progress, scene); lastPublish = clock.now
                     }
                 }

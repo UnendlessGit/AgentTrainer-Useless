@@ -112,7 +112,7 @@ struct TrainView: View {
             HStack(spacing: 25) {
                 Metric(title: "STEPS / SECOND", value: String(format: "%.2f", p.stepsPerSecond))
                 Metric(title: "MLX ACTIVE / CACHE", value: "\(bytes(p.activeMemory)) / \(bytes(p.cacheMemory))")
-                Metric(title: "APP MEMORY", value: bytes(Int(p.residentMemory)))
+                Metric(title: "APP FOOTPRINT", value: p.physicalFootprint.map { bytes(Int($0)) } ?? "—")
                 Metric(title: "CPU · 100% / CORE", value: String(format: "%.0f%%", p.cpuPercent))
             }
             Text("Learning rate \(String(format: "%.6f", p.learningRate)) · \(p.trainingExamples.formatted()) training decisions · \(p.validationRecordings) held-out recordings · \(p.excludedOutsideTarget) actions outside the capture target excluded.")
@@ -127,6 +127,8 @@ struct TrainView: View {
             Text(p.checkpoint.map { "Latest checkpoint: \($0.uuidString.prefix(8)) · weights, optimizer and memory saved" } ?? "No checkpoint written yet.")
                 .font(.caption).foregroundStyle(.secondary)
             Text("Metal acceleration is active during tensor work. macOS does not expose a reliable per-app GPU utilization percentage here.")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("App footprint includes unified-memory allocations. MLX active and cache memory are components of that total, not additional usage.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

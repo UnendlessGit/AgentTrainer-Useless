@@ -43,6 +43,9 @@ struct RunView: View {
                             }
                             Text("\(runner.progress.inputTransitions) input transitions · \(runner.progress.decisions - runner.progress.inputTransitions) waits")
                                 .font(.caption).foregroundStyle(.secondary)
+                            Text("Held input: " + heldInputLabel)
+                                .font(.callout.weight(.medium))
+                                .foregroundStyle(heldInputLabel == "None" ? Color.secondary : Color.orange)
                             if !runner.progress.keyPresses.isEmpty {
                                 Text("Key presses: " + runner.progress.keyPresses.keys.sorted().map {
                                     "\(KeyNames.name($0)) ×\(runner.progress.keyPresses[$0, default: 0])"
@@ -171,5 +174,11 @@ struct RunView: View {
         await runner.catalog.refresh()
         if !runner.catalog.displays.contains(where: { $0.id == runner.configuration.capture.target.displayID }) { runner.configuration.capture.target.displayID = runner.catalog.displays.first?.id }
         if let id = runner.configuration.capture.target.windowID, !runner.catalog.windows.contains(where: { $0.id == id }) { runner.configuration.capture.target.windowID = nil }
+    }
+
+    private var heldInputLabel: String {
+        let state = runner.progress.heldInput
+        let labels = state.keys.sorted().map(KeyNames.name) + state.buttons.sorted().map(KeyNames.button)
+        return labels.isEmpty ? "None" : labels.joined(separator: ", ")
     }
 }

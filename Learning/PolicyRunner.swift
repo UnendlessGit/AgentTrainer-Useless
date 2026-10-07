@@ -8,6 +8,7 @@ struct RunProgress: Sendable {
     var inputTransitions = 0
     var keyPresses: [UInt16: Int] = [:]
     var keyRepeats: [UInt16: Int] = [:]
+    var heldInput = InputState()
     var elapsed = 0.0
     var inferenceMilliseconds = 0.0
     var activeMemory = 0
