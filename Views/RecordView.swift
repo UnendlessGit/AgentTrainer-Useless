@@ -29,6 +29,11 @@ struct RecordView: View {
                                 Metric(title: "INPUT EVENTS", value: (recorder.manifest?.inputEventCount ?? 0).formatted())
                                 StatusPill(title: recorder.phase.rawValue, color: recorder.isBusy ? .red : .secondary)
                             }
+                            if let manifest = recorder.manifest, manifest.duration > 0 {
+                                Text("Session average: \(Double(manifest.observationCount) / manifest.duration, format: .number.precision(.fractionLength(1))) observations/s · \(manifest.droppedVisualFrames) frames replaced before sampling")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                    .help("The average includes capture startup. Replaced frames were received but superseded before sampling; macOS may also skip delivery. Input transitions are recorded separately.")
+                            }
                         }
                         if !recorder.permissions.screenRecording {
                             Surface(title: "Allow screen recording", symbol: "lock.rectangle") {
@@ -54,7 +59,7 @@ struct RecordView: View {
                         Surface(title: "Capture quality", symbol: "viewfinder") {
                             Picker("Resolution", selection: $session.recordingForm.settings.maximumDimension) {
                                 Text("720 px").tag(720); Text("1280 px").tag(1280); Text("1920 px").tag(1920); Text("2560 px").tag(2560)
-                            }
+                            }.help("Maximum image width or height in pixels. Retina sources retain their native detail up to this limit.")
                             Picker("Capture rate", selection: $session.recordingForm.settings.framesPerSecond) {
                                 ForEach([5, 10, 15, 30, 60], id: \.self) { Text("\($0) observations/s").tag($0) }
                             }

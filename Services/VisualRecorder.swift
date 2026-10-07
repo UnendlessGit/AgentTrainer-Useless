@@ -15,6 +15,7 @@ final class VisualRecorder: @unchecked Sendable {
     private let source: CaptureFrameSource
     private let clock: SessionClock
     private let journal: RecordingJournal
+    private let images: RecordingImageStore
     private let input: InputCapture?
     private let settings: RecordingSettings
     private let onPreview: @Sendable (Data, RecordingManifest) -> Void
@@ -24,6 +25,7 @@ final class VisualRecorder: @unchecked Sendable {
          settings: RecordingSettings, onPreview: @escaping @Sendable (Data, RecordingManifest) -> Void,
          onFailure: @escaping @Sendable (String) -> Void) {
         self.clock = clock; self.journal = journal; self.input = input; self.settings = settings
+        images = RecordingImageStore(root: journal.url)
         self.onPreview = onPreview; self.onFailure = onFailure
         source = CaptureFrameSource(clock: clock, maximumDimension: settings.maximumDimension,
                                     onDropped: { journal.noteDroppedVisualFrame() }, onFailure: onFailure)
@@ -65,8 +67,7 @@ final class VisualRecorder: @unchecked Sendable {
                     }
                     CGImageDestinationAddImage(destination, scene.image, [kCGImageDestinationLossyCompressionQuality: settings.quality] as CFDictionary)
                     guard CGImageDestinationFinalize(destination) else { throw DataIntegrityError.io("The captured frame could not be encoded.") }
-                    let path = String(format: "frames/%012llu.jpg", index)
-                    try AtomicFile.write(data as Data, to: journal.url.appendingPathComponent(path))
+                    let path = try images.write(data as Data, index: index)
                     lastImageFile = path; preview = data as Data
                 }
                 guard let path = lastImageFile else { return }

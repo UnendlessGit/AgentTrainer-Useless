@@ -2,6 +2,24 @@ import XCTest
 @testable import AgentTrainer
 
 final class RecordingJournalTests: XCTestCase {
+    func testIdenticalEncodedFramesReuseStorageAndFailedWritesKeepPreviousPixels() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let images = RecordingImageStore(root: root)
+        let original = Data([1, 2, 3]), changed = Data([1, 2, 4])
+        let first = try images.write(original, index: 0)
+        XCTAssertEqual(try images.write(original, index: 1), first)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("frames/000000000001.jpg").path))
+        let obstacle = root.appendingPathComponent("frames/000000000002.jpg")
+        try FileManager.default.createDirectory(at: obstacle, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try images.write(changed, index: 2))
+        XCTAssertEqual(try images.write(original, index: 3), first)
+        let next = try images.write(changed, index: 4)
+        XCTAssertNotEqual(next, first)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent(first)), original)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent(next)), changed)
+    }
+
     private var root: URL!
     override func setUpWithError() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

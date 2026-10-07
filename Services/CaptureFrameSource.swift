@@ -94,8 +94,12 @@ final class CaptureFrameSource: NSObject, SCStreamOutput, SCStreamDelegate, @unc
                 availableTime: clock.now, generation: scene.generation, reusedPixels: true)
         }
         let bounds = snapshot.1.values.reduce(CGRect.null) { $0.union($1.bounds) }
-        let scale = min(1, Double(maximumDimension) / max(bounds.width, bounds.height))
-        let width = max(2, Int((bounds.width * scale).rounded())), height = max(2, Int((bounds.height * scale).rounded()))
+        let density = snapshot.1.values.map { frame in
+            max(Double(CVPixelBufferGetWidth(frame.buffer)) / frame.bounds.width,
+                Double(CVPixelBufferGetHeight(frame.buffer)) / frame.bounds.height)
+        }.max() ?? 1
+        let raster = try CaptureRasterSize(bounds: bounds, pixelScale: density, maximumDimension: maximumDimension)
+        let width = raster.width, height = raster.height
         let rectangle = CGRect(x: 0, y: 0, width: width, height: height)
         var composite = CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: rectangle)
         for frame in snapshot.1.values {

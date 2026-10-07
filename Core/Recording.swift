@@ -10,6 +10,25 @@ struct CaptureRect: Codable, Equatable, Sendable {
     var isValid: Bool { [x, y, width, height].allSatisfy(\.isFinite) && width > 0 && height > 0 }
 }
 
+/// Capture coordinates are points, while resolution limits are pixels. Preserve
+/// the source's Retina detail within the selected pixel budget.
+struct CaptureRasterSize: Equatable {
+    var width: Int
+    var height: Int
+
+    init(bounds: CGRect, pixelScale: Double, maximumDimension: Int) throws {
+        guard CaptureRect(bounds).isValid, pixelScale.isFinite, pixelScale > 0,
+              (64...7680).contains(maximumDimension) else {
+            throw DataIntegrityError.invalidData("The capture source has invalid pixel geometry.")
+        }
+        let scale = min(pixelScale, Double(maximumDimension) / max(bounds.width, bounds.height))
+        let limit = maximumDimension / 2 * 2
+        // ScreenCaptureKit's surface path requires even dimensions on some sources.
+        width = max(2, min(limit, Int((bounds.width * scale / 2).rounded()) * 2))
+        height = max(2, min(limit, Int((bounds.height * scale / 2).rounded()) * 2))
+    }
+}
+
 enum CaptureKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case desktop = "Full desktop", display = "Display", window = "Window", region = "Region"
     var id: String { rawValue }

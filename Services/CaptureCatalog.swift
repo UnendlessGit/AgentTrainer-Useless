@@ -93,15 +93,15 @@ final class CaptureCatalog {
             parts.append((choice.id, SCContentFilter(desktopIndependentWindow: choice.window), bounds, crop))
         }
         let union = parts.reduce(CGRect.null) { $0.union($1.2) }
-        let scale = min(1, Double(settings.maximumDimension) / max(union.width, union.height))
+        let desktopScale = Double(settings.maximumDimension) / max(union.width, union.height)
         var resolved = target
         resolved.globalBounds = CaptureRect(union)
-        let result = parts.map { id, filter, bounds, crop in
+        let result = try parts.map { id, filter, bounds, crop in
             let config = SCStreamConfiguration()
-            // ScreenCaptureKit's underlying surface path requires even dimensions
-            // for some window sizes, even when requesting BGRA output.
-            config.width = max(2, Int((bounds.width * scale / 2).rounded()) * 2)
-            config.height = max(2, Int((bounds.height * scale / 2).rounded()) * 2)
+            let raster = try CaptureRasterSize(bounds: bounds,
+                pixelScale: min(Double(filter.pointPixelScale), desktopScale), maximumDimension: settings.maximumDimension)
+            config.width = raster.width
+            config.height = raster.height
             config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(settings.framesPerSecond))
             config.queueDepth = 3
             config.showsCursor = settings.includesCursor

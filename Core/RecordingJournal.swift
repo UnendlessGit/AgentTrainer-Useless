@@ -1,5 +1,23 @@
 import Foundation
 
+/// Confined to the visual journal worker. Some capture sources deliver complete
+/// frames even when their pixels are unchanged. Reuse only byte-identical JPEGs;
+/// each observation still retains its own source and availability timestamps.
+final class RecordingImageStore {
+    private let root: URL
+    private var previous: (data: Data, path: String)?
+
+    init(root: URL) { self.root = root }
+
+    func write(_ data: Data, index: UInt64) throws -> String {
+        if let previous, previous.data == data { return previous.path }
+        let path = String(format: "frames/%012llu.jpg", index)
+        try AtomicFile.write(data, to: root.appendingPathComponent(path))
+        previous = (data, path)
+        return path
+    }
+}
+
 /// Thread-safe, append-only recording journal. Pixel encoding happens outside this
 /// lock; independent input/capture queues only serialize their short append writes.
 final class RecordingJournal: @unchecked Sendable {

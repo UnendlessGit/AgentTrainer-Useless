@@ -79,6 +79,15 @@ struct RecordingInspector: View {
                     Section {
                         LabeledContent("Recorded", value: item.manifest.createdAt.formatted())
                         LabeledContent("Input events", value: item.manifest.inputEventCount.formatted())
+                        if let currentFrame {
+                            LabeledContent("Image size", value: "\(currentFrame.observation.width) × \(currentFrame.observation.height) px")
+                        }
+                        LabeledContent("Requested rate", value: "\(item.manifest.settings.framesPerSecond) observations/s")
+                        if item.manifest.duration > 0 {
+                            LabeledContent("Session average", value: String(format: "%.1f observations/s", Double(item.manifest.observationCount) / item.manifest.duration))
+                        }
+                        LabeledContent("Frames replaced", value: item.manifest.droppedVisualFrames.formatted())
+                            .help("Received frames replaced before sampling. This count excludes frames macOS did not deliver. Input transitions use a separate journal.")
                         LabeledContent("Status", value: item.eligibility)
                     }
                     Button("Save changes") { save() }.buttonStyle(.borderedProminent)
