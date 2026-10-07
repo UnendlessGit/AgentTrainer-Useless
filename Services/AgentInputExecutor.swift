@@ -20,6 +20,10 @@ final class AgentInputExecutor: @unchecked Sendable {
     init(capabilities: ActionCapabilities, doubleClickInterval: TimeInterval = 0.5,
          emit: @escaping @Sendable (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) }) {
         self.capabilities = capabilities; self.doubleClickInterval = doubleClickInterval; self.emit = emit
+        eventSource?.userData = Self.marker
+        // Synthetic event bursts must not suppress the person's local input;
+        // human override and the emergency shortcut must remain available.
+        eventSource?.localEventsSuppressionInterval = 0
         if let position = CGEvent(source: nil)?.location { owned.cursorX = position.x; owned.cursorY = position.y }
     }
 
@@ -76,10 +80,11 @@ final class AgentInputExecutor: @unchecked Sendable {
         let position = CGPoint(x: owned.cursorX, y: owned.cursorY)
         var event: CGEvent?
         switch action {
-        case .keyDown(let code), .keyUp(let code):
+        case .keyDown(let code), .keyUp(let code), .keyRepeat(let code):
             let down: Bool
-            if case .keyDown = action { down = true } else { down = false }
+            if case .keyUp = action { down = false } else { down = true }
             event = CGEvent(keyboardEventSource: eventSource, virtualKey: code, keyDown: down)
+            if case .keyRepeat = action { event?.setIntegerValueField(.keyboardEventAutorepeat, value: 1) }
             if (54...63).contains(code) { event?.type = .flagsChanged }
         case .buttonDown(let button), .buttonUp(let button):
             let down: Bool

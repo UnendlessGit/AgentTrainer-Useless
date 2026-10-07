@@ -118,14 +118,15 @@ struct RecordingItem: Identifiable, Sendable {
     var name: String { edits.name ?? manifest.name }
     var instruction: String { edits.instruction ?? manifest.instruction }
     var duration: Double { max(0, min(edits.trimEnd ?? manifest.duration, manifest.duration) - edits.trimStart) }
+    var needsRecoveryReview: Bool { manifest.status == .interrupted || manifest.status == .failed }
     var eligible: Bool {
         let approved = manifest.status == .complete && manifest.failure == nil
-            || manifest.status == .interrupted && edits.reviewedRecovery == true
+            || needsRecoveryReview && edits.reviewedRecovery == true
         return !edits.excluded && approved && manifest.observationCount >= 2 && duration > 0
     }
     var eligibility: String {
         if edits.excluded { return "Excluded" }
-        if eligible && manifest.status == .interrupted { return "Reviewed recovery" }
+        if eligible && needsRecoveryReview { return "Reviewed recovery" }
         return manifest.eligibility
     }
 }

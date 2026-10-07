@@ -118,6 +118,7 @@ final class CaptureFrameSource: NSObject, SCStreamOutput, SCStreamDelegate, @unc
         let displayTicks = (info[.displayTime] as? NSNumber)?.uint64Value
         let sourceTime = displayTicks.map { clock.relative(absolute: SessionClock.nanoseconds(ticks: $0)) } ?? clock.now
         var dropped = false
+        var invalidCrop = false
         lock.withLock {
             guard active, let part = parts[ObjectIdentifier(stream)] else { return }
             if let old = frames[part.id], old.generation > (consumed[part.id] ?? 0) { dropped = true }
@@ -126,10 +127,14 @@ final class CaptureFrameSource: NSObject, SCStreamOutput, SCStreamDelegate, @unc
             if part.tracksWindowGeometry, let dictionary = info[.screenRect] as? NSDictionary,
                let screenRect = CGRect(dictionaryRepresentation: dictionary as CFDictionary), screenRect.width > 0, screenRect.height > 0 {
                 bounds = screenRect
-                if let crop = part.crop { bounds = crop.offsetBy(dx: screenRect.minX, dy: screenRect.minY) }
+                if let crop = part.crop {
+                    guard CGRect(origin: .zero, size: screenRect.size).contains(crop) else { invalidCrop = true; return }
+                    bounds = crop.offsetBy(dx: screenRect.minX, dy: screenRect.minY)
+                }
             }
             frames[part.id] = Frame(buffer: buffer, time: sourceTime, generation: generation, bounds: bounds)
         }
+        if invalidCrop { fail("The selected region no longer fits inside its window. Resize the region before recording again."); return }
         if dropped { onDropped() }
     }
 

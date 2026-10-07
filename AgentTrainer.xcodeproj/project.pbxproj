@@ -25,6 +25,7 @@
 		4A123952D1633367C9426862 /* AppPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = C494FC96A38520311B030841 /* AppPreferences.swift */; };
 		4A69DC15DE649F4BAA493784 /* RecordView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C31DE9F561334A1F0187FEE /* RecordView.swift */; };
 		5287AD61494A5FBE1AFA572A /* InputCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D19C0F52DD0D08932E3758F /* InputCapture.swift */; };
+		52CE346DB63ECCA2B402CB86 /* RecordingPreviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 751C11E75F68B7E2B122FFE5 /* RecordingPreviewTests.swift */; };
 		54773ED8DA91427A3712F9A6 /* ResumableAdamW.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD779EB54428C6073CEF6A8C /* ResumableAdamW.swift */; };
 		5852E6741D3BADF80A9D9653 /* CheckpointMaintenance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58BAAAFDD3996C820C0044CA /* CheckpointMaintenance.swift */; };
 		5A07A54E48EFED880EF761D9 /* RecordingJournal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60909A6B7D4515BE23622454 /* RecordingJournal.swift */; };
@@ -64,6 +65,7 @@
 		C96B525C3A820811F42D0518 /* PolicyRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8339315CF33749B8382AF97 /* PolicyRunner.swift */; };
 		CC70745D7F858A5C8B1B5BAB /* WorkspaceWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31BAAAF0DF84D7F06D915765 /* WorkspaceWorkflowTests.swift */; };
 		CD6387003419801939CDC9E2 /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = 9DAD19FCC7E0E177D3B6B368 /* MLX */; };
+		CE2D2368A1B74DA2A80D3336 /* RecordingPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AEFC66C13D7BD563A4E970D /* RecordingPreview.swift */; };
 		CEC2712B8BFF0A1217263718 /* TrainingPipelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91B7449DD1B6FD4661FB2162 /* TrainingPipelineTests.swift */; };
 		D0CA0FC488589AC0DD593F33 /* CausalAlignmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BE03CE9F16DB429C9F8D9E7 /* CausalAlignmentTests.swift */; };
 		D1BEFFB9C6DE9435F2F29D76 /* JSONLines.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F81E47CC59C61F2208D0553 /* JSONLines.swift */; };
@@ -121,6 +123,7 @@
 		41D6A95E9A59AA0C28CEB9F0 /* TrainingSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingSettings.swift; sourceTree = "<group>"; };
 		4206A3D69BD2CD5C5037709A /* PolicyActionCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PolicyActionCodec.swift; sourceTree = "<group>"; };
 		435180A4847802B75634C6A5 /* ModelsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsView.swift; sourceTree = "<group>"; };
+		4AEFC66C13D7BD563A4E970D /* RecordingPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingPreview.swift; sourceTree = "<group>"; };
 		4F81E47CC59C61F2208D0553 /* JSONLines.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONLines.swift; sourceTree = "<group>"; };
 		58BAAAFDD3996C820C0044CA /* CheckpointMaintenance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CheckpointMaintenance.swift; sourceTree = "<group>"; };
 		60909A6B7D4515BE23622454 /* RecordingJournal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingJournal.swift; sourceTree = "<group>"; };
@@ -129,6 +132,7 @@
 		6B1286099AA9FE5C53840B86 /* ShortcutBindings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutBindings.swift; sourceTree = "<group>"; };
 		6D19C0F52DD0D08932E3758F /* InputCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputCapture.swift; sourceTree = "<group>"; };
 		708A3535C7C40BAEB3914780 /* ObservationPreprocessorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObservationPreprocessorTests.swift; sourceTree = "<group>"; };
+		751C11E75F68B7E2B122FFE5 /* RecordingPreviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingPreviewTests.swift; sourceTree = "<group>"; };
 		7DF20CD7A33E16F32D9A99FF /* CaptureFrameSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureFrameSource.swift; sourceTree = "<group>"; };
 		7EF21BAC4E6BE5D85335B860 /* VisualRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualRecorder.swift; sourceTree = "<group>"; };
 		827DC1991C9668920979AB01 /* AgentTrainerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgentTrainerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -284,6 +288,7 @@
 				4206A3D69BD2CD5C5037709A /* PolicyActionCodec.swift */,
 				1A1873D2484DE121339E874C /* Recording.swift */,
 				60909A6B7D4515BE23622454 /* RecordingJournal.swift */,
+				4AEFC66C13D7BD563A4E970D /* RecordingPreview.swift */,
 				3A6FC651CCDF86FF6599455F /* RunConfiguration.swift */,
 				89B7337BCED3E0F9B2A9917B /* SequenceDataset.swift */,
 				2BD078648DA4A3CB73D5158A /* SessionClock.swift */,
@@ -322,6 +327,7 @@
 				A708AB66EE12CC0262F51830 /* PolicyNetworkTests.swift */,
 				09BE9AF281486ECEA700765E /* PolicyRunnerTests.swift */,
 				08FB1F4C3BCAE0DCD2A2448C /* RecordingJournalTests.swift */,
+				751C11E75F68B7E2B122FFE5 /* RecordingPreviewTests.swift */,
 				FD048CE370F2DA09D56280E2 /* TrainingExampleTests.swift */,
 				91B7449DD1B6FD4661FB2162 /* TrainingPipelineTests.swift */,
 			);
@@ -493,6 +499,7 @@
 				2D7AFDDA605257AF7A3DD2EE /* RecordingForm.swift in Sources */,
 				9A26CC507CBDD6B7D5C4FF64 /* RecordingInspector.swift in Sources */,
 				5A07A54E48EFED880EF761D9 /* RecordingJournal.swift in Sources */,
+				CE2D2368A1B74DA2A80D3336 /* RecordingPreview.swift in Sources */,
 				54773ED8DA91427A3712F9A6 /* ResumableAdamW.swift in Sources */,
 				36F7F4B0551EA8B329C73075 /* RunConfiguration.swift in Sources */,
 				A863893692622B3103616ED4 /* RunCoordinator.swift in Sources */,
@@ -530,6 +537,7 @@
 				8089C3E99F27486329A29C5A /* PolicyNetworkTests.swift in Sources */,
 				1CA4D572A1F10935EAD0F15E /* PolicyRunnerTests.swift in Sources */,
 				E2F2DC25E3DA1244D53220EA /* RecordingJournalTests.swift in Sources */,
+				52CE346DB63ECCA2B402CB86 /* RecordingPreviewTests.swift in Sources */,
 				5BF37EA108442F91F1600EAE /* TrainingExampleTests.swift in Sources */,
 				CEC2712B8BFF0A1217263718 /* TrainingPipelineTests.swift in Sources */,
 			);

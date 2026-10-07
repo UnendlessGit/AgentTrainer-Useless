@@ -1,9 +1,10 @@
 import SwiftUI
 
 struct LibraryView: View {
+    private static let allRecordingsID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
     var store: WorkspaceStore
     @State private var kind: LibraryKind = .imitation
-    @State private var folderID: UUID?
+    @State private var folderID: UUID? = Self.allRecordingsID
     @State private var recordingID: UUID?
     @State private var search = ""
     @State private var folderEditor = false
@@ -13,14 +14,14 @@ struct LibraryView: View {
     @State private var deleting: RecordingItem?
 
     private var items: [RecordingItem] {
-        store.recordings.filter { $0.manifest.kind == kind && (folderID == nil || $0.manifest.folderID == folderID)
+        store.recordings.filter { $0.manifest.kind == kind && (folderID == nil || folderID == Self.allRecordingsID || $0.manifest.folderID == folderID)
             && (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.instruction.localizedCaseInsensitiveContains(search)) }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             PageHeader(title: "Library", subtitle: "A growing collection of everything you teach.") {
-                Button { editingFolder = nil; folderName = ""; parentID = folderID; folderEditor = true } label: { Label("New folder", systemImage: "folder.badge.plus") }
+                Button { editingFolder = nil; folderName = ""; parentID = store.folders.first(where: { $0.id == folderID })?.id; folderError = nil; folderEditor = true } label: { Label("New folder", systemImage: "folder.badge.plus") }
                     .buttonStyle(.borderedProminent)
             }
             HStack {
@@ -32,15 +33,23 @@ struct LibraryView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("FOLDERS").font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.leading, 10)
                     List(selection: $folderID) {
-                        Label("All recordings", systemImage: "square.stack").tag(nil as UUID?)
+                        Label("All recordings", systemImage: "square.stack").tag(Self.allRecordingsID)
                         ForEach(store.folders.filter { $0.kind == kind }.sorted { store.folderPath($0) < store.folderPath($1) }) { folder in
-                            Label(store.folderPath(folder), systemImage: "folder").tag(Optional(folder.id))
+                            Label(store.folderPath(folder), systemImage: "folder").tag(folder.id)
                                 .contextMenu {
-                                    Button("Rename or move…") { editingFolder = folder; folderName = folder.name; parentID = folder.parentID; folderEditor = true }
+                                    Button("Rename or move…") { edit(folder) }
                                     Button("Delete empty folder", role: .destructive) { store.perform { try store.deleteFolder(folder) } }
                                 }
                         }
                     }.listStyle(.plain)
+                    if let folder = store.folders.first(where: { $0.id == folderID }) {
+                        HStack {
+                            Button("Edit folder…") { edit(folder) }
+                            Spacer()
+                            Button { store.perform { try store.deleteFolder(folder); folderID = Self.allRecordingsID } } label: { Image(systemName: "trash") }
+                                .accessibilityLabel("Delete empty folder").help("Delete empty folder")
+                        }.padding(.horizontal, 8)
+                    }
                 }.frame(minWidth: 165, idealWidth: 190, maxWidth: 250)
                 VStack(spacing: 0) {
                     if items.isEmpty {
@@ -86,7 +95,7 @@ struct LibraryView: View {
             }
             Button("Cancel", role: .cancel) { deleting = nil }
         } message: { Text("The original pixels, input events and edits move together. Models will no longer include this recording in new training runs.") }
-        .onChange(of: kind) { _, _ in folderID = nil; recordingID = nil }
+        .onChange(of: kind) { _, _ in folderID = Self.allRecordingsID; recordingID = nil }
         .sheet(item: $inspected) { item in RecordingInspector(store: store, item: item) }
         .sheet(isPresented: $folderEditor) {
             VStack(alignment: .leading, spacing: 20) {
@@ -112,4 +121,7 @@ struct LibraryView: View {
     }
     @State private var inspected: RecordingItem?
     @State private var folderError: String?
+    private func edit(_ folder: LibraryFolder) {
+        editingFolder = folder; folderName = folder.name; parentID = folder.parentID; folderError = nil; folderEditor = true
+    }
 }

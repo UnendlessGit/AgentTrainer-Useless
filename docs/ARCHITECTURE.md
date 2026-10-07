@@ -10,9 +10,11 @@ Record raw input independently from image cadence. A journal stores monotonic ho
 
 Static scenes still produce observation ticks, referencing immutable pixels already on disk. No new frame is invented. Capture suspension stops the session rather than reusing stale pixels indefinitely. The capture queue holds only the newest frame for each source; the input journal has a separate bounded queue and stops with a visible failure on overflow.
 
-Actions are a tagged union of key down/up, pointer movement, relative movement, button down/up, scroll and wait. The grammar masks invalid transitions using physical input state and configured capabilities. A chord is an ordered sequence of downs followed by releases. A drag is pointer movement while a button is held. The model must not emit unrelated independent booleans that permit contradictory actions. The same grammar runs in dataset validation, evaluation, sampling and execution. Emergency cleanup releases only the keys/buttons owned by the agent.
+Actions are a tagged union of key down/up/repeat, pointer movement, relative movement, button down/up, scroll and wait. Raw journals preserve keyboard repeat flags; dataset normalization converts them to explicit repeat targets. A posted hold does not automatically reproduce macOS typing repeats, so the policy learns each repeat's timing. Repeats require an already-held allowed key and never restart the hold watchdog. The optional repeat capability extends the vocabulary and fingerprint; older down/up-only configurations remain compatible until it is enabled.
 
-## Planned policy and comparisons
+The grammar masks invalid transitions using input state and configured capabilities. A chord is an ordered sequence of downs followed by releases. A drag is pointer movement while a button is held. The model must not emit unrelated independent booleans that permit contradictory actions. The same grammar runs in dataset validation, evaluation, sampling and execution. Emergency cleanup releases only the keys/buttons owned by the agent. Policy event sources do not suppress local hardware input; human override remains observable.
+
+## Policy and comparisons
 
 Preserve spatial information through a patch-level vision encoder and position embeddings. A global view captures layout; a cursor-centered crop preserves local target detail. A spatial pointer head should score locations using visual tokens, then refine coordinates, rather than regress positions from a globally averaged feature vector.
 
@@ -26,7 +28,9 @@ Pre-training uses only separately assigned pre-training data. Predict future vis
 
 ## Checkpoints and resource ownership
 
-A resumable checkpoint must contain model weights, optimizer state, stage, step/epoch, RNG state, data selection/split identity and preprocessing/action/configuration fingerprints. Write a complete new checkpoint directory, synchronize it, then atomically replace the latest/best pointer. Never overwrite the previous valid checkpoint in place. A configuration mismatch makes the checkpoint unusable until the user restores the compatible configuration or retrains.
+A resumable checkpoint contains model weights, optimizer state, recurrent carry, stage, step/epoch/cursor, deterministic shuffle seed, data selection/split identity and preprocessing/action/configuration fingerprints. The current optimizer loop has no stochastic augmentation or dropout; adding either requires preserving its RNG state as well. Write a complete new checkpoint directory, synchronize it, then atomically replace the latest/best pointer. Never overwrite the previous valid checkpoint in place. A configuration mismatch makes the checkpoint unusable until the user restores the compatible configuration or retrains.
+
+Library previews build cancellable disk time/offset indexes and decode only the selected frame and a bounded input interval. Temporary indexes do not replace source journals. Reviewed interrupted or failed recordings may use a valid complete prefix; malformed complete rows and missing images still fail validation. Checkpoint cleanup preserves every best/latest pointer, every model reference and three recent copies per stage, and fails closed for a model with malformed metadata.
 
 MLX arrays and model/optimizer state belong to one dedicated execution context. SwiftUI receives small immutable metric snapshots. Decode images through bounded prefetch; do not cache the entire corpus in unified memory. Profile allocation, active/cache MLX memory, process resident memory, CPU and throughput. Report GPU utilization only if actually measured; Metal availability does not equal utilization.
 

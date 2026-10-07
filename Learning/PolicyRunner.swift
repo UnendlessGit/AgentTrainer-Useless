@@ -5,6 +5,9 @@ import MLXRandom
 
 struct RunProgress: Sendable {
     var decisions = 0
+    var inputTransitions = 0
+    var keyPresses: [UInt16: Int] = [:]
+    var keyRepeats: [UInt16: Int] = [:]
     var elapsed = 0.0
     var inferenceMilliseconds = 0.0
     var activeMemory = 0
@@ -12,6 +15,13 @@ struct RunProgress: Sendable {
     var lastAction = "Waiting for the first observation"
     var waitingForHuman = false
     var history: [String] = []
+
+    mutating func record(_ action: ComputerAction) {
+        decisions += 1
+        if case .wait = action {} else { inputTransitions += 1 }
+        if case .keyDown(let code) = action { keyPresses[code, default: 0] += 1 }
+        if case .keyRepeat(let code) = action { keyRepeats[code, default: 0] += 1 }
+    }
 }
 
 /// Uses the same preprocessing, codec, grammar and recurrent carry as training.

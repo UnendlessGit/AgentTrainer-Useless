@@ -22,7 +22,7 @@ enum TrainingExampleBuilder {
         guard item.manifest.schemaVersion == 1, item.manifest.actionSchemaVersion == ComputerAction.schemaVersion else {
             throw DataIntegrityError.invalidData("The recording's observation/action version is incompatible with this training pipeline.")
         }
-        let recovered = item.manifest.status == .interrupted && item.edits.reviewedRecovery == true
+        let recovered = item.needsRecoveryReview && item.edits.reviewedRecovery == true
         let observations = try JSONLineCursor<VisualObservation>(url: item.url.appendingPathComponent("observations.jsonl"), recoverTail: recovered)
         let events = try JSONLineCursor<InputTransition>(url: item.url.appendingPathComponent("events.jsonl"), recoverTail: recovered)
         var event = try events.next()
@@ -39,10 +39,8 @@ enum TrainingExampleBuilder {
             lastEventTime = input.timeNanoseconds
             state.apply(input.action)
             if let x = input.cursorX, let y = input.cursorY { state.cursorX = x; state.cursorY = y }
-            if !input.isRepeat {
-                previousAction = input.action
-                previousActionTime = input.timeNanoseconds
-            }
+            previousAction = input.learningAction
+            previousActionTime = input.timeNanoseconds
             event = try events.next()
         }
 
@@ -61,17 +59,16 @@ enum TrainingExampleBuilder {
             var decisionTime = max(observation.timeNanoseconds, previousActionTime)
             var emitted = false
             while let input = event, input.timeNanoseconds <= intervalEnd {
-                let repeated = input.isRepeat
-                if input.timeNanoseconds >= trimStart && observation.timeNanoseconds >= trimStart && !repeated {
+                if input.timeNanoseconds >= trimStart && observation.timeNanoseconds >= trimStart {
                     try visit(TrainingExample(recordingID: item.id, observation: observation, state: state,
                         previousAction: previousAction, decisionTime: decisionTime,
                         elapsedSincePreviousAction: Double(decisionTime - min(decisionTime, previousActionTime)) / 1e9,
-                        targetAction: input.action, targetDelay: Double(input.timeNanoseconds - decisionTime) / 1e9,
+                        targetAction: input.learningAction, targetDelay: Double(input.timeNanoseconds - decisionTime) / 1e9,
                         nextObservation: future, instruction: item.instruction))
                     emitted = true
                 }
                 try consume(input)
-                if !repeated { decisionTime = max(decisionTime, input.timeNanoseconds) }
+                decisionTime = max(decisionTime, input.timeNanoseconds)
             }
             if !emitted && observation.timeNanoseconds >= trimStart && intervalEnd > decisionTime {
                 let delay = Double(intervalEnd - decisionTime) / 1e9

@@ -27,6 +27,7 @@ extension ActionCapabilities {
         result.pointer = pointer && other.pointer; result.relativePointer = relativePointer && other.relativePointer
         result.scrolling = scrolling && other.scrolling; result.dragging = dragging && other.dragging
         result.chords = chords && other.chords; result.maximumHeldKeys = min(maximumHeldKeys, other.maximumHeldKeys)
+        result.repeatsKeys = repeatsKeys && other.repeatsKeys
         return result
     }
 }

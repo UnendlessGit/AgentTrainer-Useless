@@ -24,7 +24,7 @@ struct RunTargetGuard: Sendable {
             // Window-list order includes non-activating auxiliary windows (for
             // example TextEdit's writing controls). Accessibility identifies the
             // real keyboard recipient; z-order is checked separately for pointers.
-            guard let focused = focusedWindowBounds(pid: pid), nearlyEqual(focused, bounds) else {
+            guard let focused = focusedWindowBounds(pid: pid, rejectingSheets: true), nearlyEqual(focused, bounds) else {
                 throw DataIntegrityError.invalidData("Another window or dialog has keyboard focus. The run stopped.")
             }
             if let point = Self.pointerDestination(action, state: state) {
@@ -46,9 +46,13 @@ struct RunTargetGuard: Sendable {
             }
         } else if let displayID = target.displayID, target.kind != .desktop {
             guard CGDisplayIsActive(displayID) != 0 else { throw DataIntegrityError.invalidData("The selected display disconnected.") }
-            if let window = windows.first(where: {
-                ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == foreground && ($0[kCGWindowLayer as String] as? NSNumber)?.intValue == 0
-            }), let bounds = rectangle(window) {
+            let displayBounds = CGDisplayBounds(displayID)
+            let current = target.kind == .region && target.region != nil
+                ? target.region!.cgRect.offsetBy(dx: displayBounds.minX, dy: displayBounds.minY) : displayBounds
+            guard nearlyEqual(current, observedBounds.cgRect) else {
+                throw DataIntegrityError.invalidData("The display layout changed during the run. Refresh the capture target and restart.")
+            }
+            if let bounds = focusedWindowBounds(pid: foreground, rejectingSheets: false) {
                 guard bounds.intersects(observedBounds.cgRect) else { throw DataIntegrityError.invalidData("The focused application is outside the selected capture target.") }
             } else { throw DataIntegrityError.invalidData("No focused application window is available inside the selected capture target.") }
         }
@@ -72,14 +76,15 @@ struct RunTargetGuard: Sendable {
         abs(a.minX - b.minX) < 2 && abs(a.minY - b.minY) < 2 && abs(a.width - b.width) < 2 && abs(a.height - b.height) < 2
     }
 
-    private func focusedWindowBounds(pid: pid_t) -> CGRect? {
+    private func focusedWindowBounds(pid: pid_t, rejectingSheets: Bool) -> CGRect? {
         let application = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(application, 0.5)
         var focusedValue: CFTypeRef?
         guard AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &focusedValue) == .success,
               let focusedValue, CFGetTypeID(focusedValue) == AXUIElementGetTypeID() else { return nil }
         let window = unsafeDowncast(focusedValue, to: AXUIElement.self)
         var children: CFTypeRef?
-        if AXUIElementCopyAttributeValue(window, kAXChildrenAttribute as CFString, &children) == .success,
+        if rejectingSheets, AXUIElementCopyAttributeValue(window, kAXChildrenAttribute as CFString, &children) == .success,
            let children = children as? [AXUIElement] {
             for child in children {
                 var role: CFTypeRef?
@@ -99,6 +104,7 @@ struct RunTargetGuard: Sendable {
 
     private func focusedApplicationPID() -> pid_t? {
         let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, 0.5)
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(system, kAXFocusedApplicationAttribute as CFString, &value) == .success, let value,
               CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }

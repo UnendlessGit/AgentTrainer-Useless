@@ -8,8 +8,10 @@ final class JSONLineCursor<Value: Decodable> {
     private var buffer = Data()
     private var eof = false
     private let recoverTail: Bool
-    init(url: URL, recoverTail: Bool = false) throws {
-        handle = try FileHandle(forReadingFrom: url); self.recoverTail = recoverTail
+    private(set) var offset: UInt64
+    init(url: URL, recoverTail: Bool = false, offset: UInt64 = 0) throws {
+        handle = try FileHandle(forReadingFrom: url); self.recoverTail = recoverTail; self.offset = offset
+        if offset > 0 { try handle.seek(toOffset: offset) }
     }
     deinit { try? handle.close() }
 
@@ -17,6 +19,7 @@ final class JSONLineCursor<Value: Decodable> {
         while true {
             if let end = buffer.firstIndex(of: 10) {
                 let data = Data(buffer[..<end])
+                offset += UInt64(data.count + 1)
                 buffer.removeSubrange(...end)
                 return try decoder.decode(Value.self, from: data)
             }

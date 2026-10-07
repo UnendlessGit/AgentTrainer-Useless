@@ -2,6 +2,49 @@ import XCTest
 @testable import AgentTrainer
 
 final class TrainingExampleTests: XCTestCase {
+    func testRecordedRepeatsRemainTimedTargetsWithoutChangingHeldState() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let journal = try RecordingJournal(root: root, manifest: RecordingManifest(name: "Held Delete", folderID: UUID(), kind: .imitation,
+            target: CaptureTarget(), settings: RecordingSettings()))
+        for time: UInt64 in [10, 100] {
+            try journal.append(observation: VisualObservation(id: 0, timeNanoseconds: time, sourceTimeNanoseconds: time,
+                imageFile: "frames/0.jpg", width: 1, height: 1, globalBounds: CaptureRect(CGRect(x: 0, y: 0, width: 10, height: 10)),
+                state: InputState(), reusedPixels: false))
+        }
+        try journal.append(event: InputTransition(id: 0, timeNanoseconds: 11, action: .keyDown(code: 51)))
+        try journal.append(event: InputTransition(id: 0, timeNanoseconds: 21, action: .keyDown(code: 51), isRepeat: true))
+        try journal.append(event: InputTransition(id: 0, timeNanoseconds: 26, action: .keyDown(code: 51), isRepeat: true))
+        try journal.append(event: InputTransition(id: 0, timeNanoseconds: 30, action: .keyUp(code: 51)))
+        try journal.finish(at: 100)
+        let item = RecordingItem(manifest: journal.snapshot, edits: RecordingEdits(), url: journal.url)
+        var examples: [TrainingExample] = []
+        try TrainingExampleBuilder.stream(item: item) { examples.append($0) }
+        XCTAssertEqual(examples.map(\.targetAction), [.keyDown(code: 51), .keyRepeat(code: 51), .keyRepeat(code: 51), .keyUp(code: 51)])
+        XCTAssertEqual(examples.map(\.state.keys), [[], [51], [51], [51]])
+        XCTAssertEqual(examples[2].previousAction, .keyRepeat(code: 51))
+        XCTAssertEqual(examples[2].targetDelay, 5e-9, accuracy: 1e-12)
+        let capabilities = ActionCapabilities(), codec = PolicyActionCodec(capabilities: capabilities)
+        XCTAssertNotNil(codec.token(for: examples[2].targetAction))
+        XCTAssertTrue(capabilities.permits(examples[2].targetAction, state: examples[2].state))
+        XCTAssertFalse(capabilities.permits(.keyRepeat(code: 51), state: InputState()))
+    }
+
+    func testLegacyVocabularyRemainsCompatibleUntilRepeatsAreEnabled() throws {
+        var configuration = PolicyConfiguration()
+        configuration.capabilities.keyRepeats = nil
+        let oldFingerprint = configuration.fingerprint
+        let decoded = try JSONDecoder().decode(PolicyConfiguration.self, from: JSONEncoder().encode(configuration))
+        XCTAssertFalse(decoded.capabilities.repeatsKeys)
+        XCTAssertEqual(decoded.fingerprint, oldFingerprint)
+        let original = PolicyActionCodec(capabilities: decoded.capabilities)
+        XCTAssertNil(original.token(for: .keyRepeat(code: 51)))
+        configuration.capabilities.repeatsKeys = true
+        let extended = PolicyActionCodec(capabilities: configuration.capabilities)
+        XCTAssertNotEqual(configuration.fingerprint, oldFingerprint)
+        XCTAssertEqual(Array(extended.actions.prefix(original.count)), original.actions)
+    }
+
     func testWaitOnlyDemonstrationIsEligibleAndTeachesInaction() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -48,6 +91,9 @@ final class TrainingExampleTests: XCTestCase {
         XCTAssertTrue(item.eligible)
         XCTAssertEqual(examples.map(\.targetAction), [.keyDown(code: 0), .keyUp(code: 0)])
         XCTAssertEqual(try Data(contentsOf: eventsURL), original)
+        item.manifest.status = .failed
+        XCTAssertTrue(item.eligible)
+        XCTAssertNoThrow(try TrainingExampleBuilder.stream(item: item) { _ in })
         item.manifest.status = .complete; item.manifest.failure = nil
         XCTAssertThrowsError(try TrainingExampleBuilder.stream(item: item) { _ in })
     }

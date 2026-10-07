@@ -48,7 +48,8 @@ struct PolicyConfiguration: Codable, Equatable, Sendable {
                       capabilities.buttons.sorted().map(String.init).joined(separator: ","),
                       String(capabilities.pointer), String(capabilities.relativePointer), String(capabilities.scrolling),
                       String(capabilities.dragging), String(capabilities.chords), String(capabilities.maximumHeldKeys)]
-        return SHA256.hash(data: Data(stable.joined(separator: "|").utf8)).map { String(format: "%02x", $0) }.joined()
+        let repeatExtension = capabilities.repeatsKeys ? "|explicit-key-repeat-v1" : ""
+        return SHA256.hash(data: Data((stable.joined(separator: "|") + repeatExtension).utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }
 

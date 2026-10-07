@@ -103,6 +103,7 @@ private struct ModelEditor: View {
                 Toggle("Scrolling", isOn: $draft.configuration.capabilities.scrolling)
                 Toggle("Dragging", isOn: $draft.configuration.capabilities.dragging)
                 Toggle("Key combinations", isOn: $draft.configuration.capabilities.chords)
+                Toggle("Repeated key events while held", isOn: $draft.configuration.capabilities.repeatsKeys)
                 ForEach(0...2, id: \.self) { code in
                     Toggle(KeyNames.button(code), isOn: Binding(get: { draft.configuration.capabilities.buttons.contains(code) }, set: {
                         if $0 { draft.configuration.capabilities.buttons.insert(code) } else { draft.configuration.capabilities.buttons.remove(code) }

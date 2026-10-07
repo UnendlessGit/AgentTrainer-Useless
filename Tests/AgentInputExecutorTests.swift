@@ -4,14 +4,31 @@ import CoreGraphics
 
 private final class CapturedInputEvents: @unchecked Sendable {
     private let lock = NSLock()
-    private var events: [(CGEventType, Int64, UInt64, Int64)] = []
+    private var events: [(CGEventType, Int64, UInt64, Int64, Int64)] = []
     func append(_ event: CGEvent) {
-        lock.withLock { events.append((event.type, event.getIntegerValueField(.keyboardEventKeycode), event.flags.rawValue, event.getIntegerValueField(.eventSourceUserData))) }
+        lock.withLock { events.append((event.type, event.getIntegerValueField(.keyboardEventKeycode), event.flags.rawValue, event.getIntegerValueField(.eventSourceUserData), event.getIntegerValueField(.keyboardEventAutorepeat))) }
     }
-    var values: [(CGEventType, Int64, UInt64, Int64)] { lock.withLock { events } }
+    var values: [(CGEventType, Int64, UInt64, Int64, Int64)] { lock.withLock { events } }
 }
 
 final class AgentInputExecutorTests: XCTestCase {
+    func testExplicitRepeatRequiresOwnedKeyAndDoesNotRestartHoldDeadline() throws {
+        let events = CapturedInputEvents()
+        let executor = AgentInputExecutor(capabilities: ActionCapabilities(), emit: events.append)
+        let bounds = CaptureRect(CGRect(x: 0, y: 0, width: 100, height: 100))
+        XCTAssertThrowsError(try executor.execute(.keyRepeat(code: 51), bounds: bounds))
+        try executor.execute(.keyDown(code: 51), bounds: bounds)
+        Thread.sleep(forTimeInterval: 0.01)
+        let holdBeforeRepeat = executor.longestHold
+        try executor.execute(.keyRepeat(code: 51), bounds: bounds)
+        XCTAssertGreaterThanOrEqual(executor.longestHold, holdBeforeRepeat)
+        XCTAssertEqual(executor.state.keys, [51])
+        executor.stop("Emergency")
+        XCTAssertEqual(events.values.map { $0.0 }, [.keyDown, .keyDown, .keyUp])
+        XCTAssertEqual(events.values.map { $0.4 }, [0, 1, 0])
+        XCTAssertTrue(executor.state.keys.isEmpty)
+    }
+
     func testEmergencyReleasesOwnedChordAndPreventsFurtherPresses() throws {
         let events = CapturedInputEvents()
         let executor = AgentInputExecutor(capabilities: ActionCapabilities(), emit: events.append)

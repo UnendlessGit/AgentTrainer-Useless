@@ -37,9 +37,23 @@ struct RunView: View {
                         Surface {
                             HStack {
                                 StatusPill(title: runner.phase.rawValue, color: runner.isBusy ? .green : .secondary)
-                                Metric(title: "ACTIONS", value: runner.progress.decisions.formatted())
+                                Metric(title: "DECISIONS", value: runner.progress.decisions.formatted())
                                 Metric(title: "ELAPSED", value: DisplayFormat.duration(runner.progress.elapsed))
                                 Metric(title: "INFERENCE", value: String(format: "%.1f ms", runner.progress.inferenceMilliseconds))
+                            }
+                            Text("\(runner.progress.inputTransitions) input transitions · \(runner.progress.decisions - runner.progress.inputTransitions) waits")
+                                .font(.caption).foregroundStyle(.secondary)
+                            if !runner.progress.keyPresses.isEmpty {
+                                Text("Key presses: " + runner.progress.keyPresses.keys.sorted().map {
+                                    "\(KeyNames.name($0)) ×\(runner.progress.keyPresses[$0, default: 0])"
+                                }.joined(separator: ", "))
+                                .font(.caption).foregroundStyle(.secondary)
+                            }
+                            if !runner.progress.keyRepeats.isEmpty {
+                                Text("Repeated keys: " + runner.progress.keyRepeats.keys.sorted().map {
+                                    "\(KeyNames.name($0)) ×\(runner.progress.keyRepeats[$0, default: 0])"
+                                }.joined(separator: ", "))
+                                .font(.caption).foregroundStyle(.secondary)
                             }
                             Text(runner.message).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                             if runner.progress.waitingForHuman && runner.isBusy {
@@ -85,6 +99,7 @@ struct RunView: View {
                             Toggle("Scrolling", isOn: $runner.configuration.permissions.scrolling)
                             Toggle("Dragging", isOn: $runner.configuration.permissions.dragging)
                             Toggle("Key combinations", isOn: $runner.configuration.permissions.chords)
+                            Toggle("Repeated key events while held", isOn: $runner.configuration.permissions.repeatsKeys)
                             ForEach(0...2, id: \.self) { button in
                                 Toggle(KeyNames.button(button), isOn: Binding(get: { runner.configuration.permissions.buttons.contains(button) }, set: {
                                     if $0 { runner.configuration.permissions.buttons.insert(button) } else { runner.configuration.permissions.buttons.remove(button) }

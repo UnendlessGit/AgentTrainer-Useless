@@ -4,8 +4,8 @@ struct RecordingInspector: View {
     var store: WorkspaceStore
     let item: RecordingItem
     @Environment(\.dismiss) private var dismiss
-    @State private var observations: [VisualObservation] = []
-    @State private var events: [InputTransition] = []
+    @State private var preview: RecordingPreview?
+    @State private var currentFrame: RecordingPreviewFrame?
     @State private var frame = 0.0
     @State private var name = ""
     @State private var instruction = ""
@@ -16,15 +16,7 @@ struct RecordingInspector: View {
     @State private var folderID: UUID?
     @State private var error: String?
     @State private var loading = true
-    @State private var image: NSImage?
-
-    private var current: VisualObservation? { observations.indices.contains(Int(frame)) ? observations[Int(frame)] : nil }
-    private var nearbyEvents: [InputTransition] {
-        guard let current else { return Array(events.prefix(200)) }
-        let start = current.timeNanoseconds
-        let end = Int(frame) + 1 < observations.count ? observations[Int(frame) + 1].timeNanoseconds : UInt64.max
-        return events.filter { $0.timeNanoseconds > start && $0.timeNanoseconds <= end }
-    }
+    private var observationCount: Int { preview?.observations.count ?? 0 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -36,26 +28,33 @@ struct RecordingInspector: View {
                 VStack(spacing: 12) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 12).fill(.black.opacity(0.9))
-                        if let image { Image(nsImage: image).resizable().scaledToFit() }
+                        if let currentFrame { Image(decorative: currentFrame.image, scale: 1).resizable().scaledToFit() }
                         else if loading { ProgressView() }
                         else { Text("No preview available").foregroundStyle(.white.opacity(0.6)) }
                     }.frame(minHeight: 230, maxHeight: 360)
-                    Slider(value: $frame, in: 0...Double(max(1, observations.count - 1)), step: 1).disabled(observations.count < 2)
                     HStack {
-                        Text("Observation \(min(Int(frame) + 1, observations.count)) / \(item.manifest.observationCount)")
+                        Button { frame = max(0, frame - 1) } label: { Image(systemName: "backward.frame") }
+                            .accessibilityLabel("Previous observation").disabled(frame <= 0)
+                        Slider(value: $frame, in: 0...Double(max(1, observationCount - 1)), step: 1)
+                            .accessibilityLabel("Observation timeline").disabled(observationCount < 2)
+                        Button { frame = min(Double(observationCount - 1), frame + 1) } label: { Image(systemName: "forward.frame") }
+                            .accessibilityLabel("Next observation").disabled(Int(frame) >= observationCount - 1)
+                    }
+                    HStack {
+                        Text("Observation \(min(Int(frame) + 1, observationCount)) / \(observationCount)")
                         Spacer()
-                        Text(String(format: "%.3f s", Double(current?.timeNanoseconds ?? 0) / 1e9)).monospacedDigit()
+                        Text(String(format: "%.3f s", Double(currentFrame?.observation.timeNanoseconds ?? 0) / 1e9)).monospacedDigit()
                     }.font(.caption).foregroundStyle(.secondary)
-                    HStack { Text("Actions after this observation").font(.headline); Spacer(); Text("\(nearbyEvents.count) events").foregroundStyle(.secondary) }
-                    List(nearbyEvents) { event in
+                    HStack { Text("Actions after this observation").font(.headline); Spacer(); Text("\(currentFrame?.eventCount ?? 0) events").foregroundStyle(.secondary) }
+                    List(currentFrame?.events ?? []) { event in
                         HStack {
                             Text(String(format: "%.6f s", Double(event.timeNanoseconds) / 1e9)).monospaced().foregroundStyle(.secondary)
                             Text(event.action.label)
                             if event.isRepeat { Text("repeat").font(.caption).foregroundStyle(.secondary) }
                         }
                     }.frame(minHeight: 160)
-                    if item.manifest.observationCount > observations.count || item.manifest.inputEventCount > events.count {
-                        Text("Preview is limited to 10,000 observations and 100,000 input events. Original journals remain complete.").font(.caption).foregroundStyle(.secondary)
+                    if let currentFrame, currentFrame.eventCount > currentFrame.events.count {
+                        Text("Showing the first 1,000 events in this observation interval. All events remain in the original journal.").font(.caption).foregroundStyle(.secondary)
                     }
                 }.frame(minWidth: 500).padding(.trailing, 16)
                 Form {
@@ -71,7 +70,7 @@ struct RecordingInspector: View {
                             ForEach(store.folders.filter { $0.kind == item.manifest.kind }) { Text(store.folderPath($0)).tag(Optional($0.id)) }
                         }
                         Toggle("Exclude from training", isOn: $excluded)
-                        if item.manifest.status == .interrupted {
+                        if item.needsRecoveryReview {
                             Text(item.manifest.failure ?? "Recording was interrupted.").font(.caption).foregroundStyle(.secondary)
                             Toggle("I reviewed this recovered recording", isOn: $reviewedRecovery)
                             Text("Only complete journal entries are used. Trim incomplete work before enabling training.").font(.caption).foregroundStyle(.secondary)
@@ -94,20 +93,25 @@ struct RecordingInspector: View {
             reviewedRecovery = item.edits.reviewedRecovery ?? false
             do {
                 let url = item.url
-                let result = try await Task.detached {
-                    let observations = try JSONLines.load(VisualObservation.self, from: url.appendingPathComponent("observations.jsonl"))
-                    let events = try JSONLines.load(InputTransition.self, from: url.appendingPathComponent("events.jsonl"), limit: 100_000)
-                    return (observations, events)
-                }.value
-                observations = result.0; events = result.1; updateImage()
-            } catch { self.error = error.localizedDescription }
+                let worker = Task.detached(priority: .userInitiated) { try RecordingPreview(recording: url) }
+                let result = try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
+                try Task.checkCancellation()
+                preview = result
+            } catch is CancellationError { return }
+            catch { self.error = error.localizedDescription }
             loading = false
         }
-        .onChange(of: frame) { _, _ in updateImage() }
-    }
-    private func updateImage() {
-        guard let current, RecordingJournal.isSafeFramePath(current.imageFile) else { image = nil; return }
-        image = NSImage(contentsOf: item.url.appendingPathComponent(current.imageFile))
+        .task(id: "\(observationCount):\(Int(frame))") {
+            guard let preview else { return }
+            let selected = Int(frame)
+            do {
+                let worker = Task.detached(priority: .userInitiated) { try preview.frame(at: selected) }
+                let result = try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
+                try Task.checkCancellation()
+                currentFrame = result
+            } catch is CancellationError { /* A newer scrub position superseded this frame. */ }
+            catch { self.error = error.localizedDescription }
+        }
     }
     private func save() {
         do {

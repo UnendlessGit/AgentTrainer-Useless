@@ -6,6 +6,9 @@ import Foundation
 enum ComputerAction: Codable, Equatable, Sendable {
     case keyDown(code: UInt16)
     case keyUp(code: UInt16)
+    /// Explicit autorepeat while held. Raw journals retain keyDown + isRepeat;
+    /// dataset normalization supplies this action without rewriting old data.
+    case keyRepeat(code: UInt16)
     case pointer(x: Double, y: Double)
     case relativePointer(dx: Double, dy: Double)
     case buttonDown(button: Int)
@@ -19,6 +22,7 @@ enum ComputerAction: Codable, Equatable, Sendable {
         switch self {
         case .keyDown(let code): return "↓ \(KeyNames.name(code))"
         case .keyUp(let code): return "↑ \(KeyNames.name(code))"
+        case .keyRepeat(let code): return "↻ \(KeyNames.name(code))"
         case .pointer(let x, let y): return String(format: "Pointer %.1f, %.1f", x, y)
         case .relativePointer(let dx, let dy): return String(format: "Relative %+.1f, %+.1f", dx, dy)
         case .buttonDown(let button): return "↓ \(KeyNames.button(button))"
@@ -43,7 +47,7 @@ struct InputState: Codable, Equatable, Sendable {
         case .buttonUp(let button): buttons.remove(button)
         case .pointer(let x, let y): cursorX = x; cursorY = y
         case .relativePointer(let dx, let dy): cursorX += dx; cursorY += dy
-        case .scroll, .wait: break
+        case .keyRepeat, .scroll, .wait: break
         }
     }
 }
@@ -57,6 +61,12 @@ struct ActionCapabilities: Codable, Equatable, Sendable {
     var dragging = true
     var chords = true
     var maximumHeldKeys = 6
+    // Missing in older models means the original down/up-only vocabulary.
+    var keyRepeats: Bool? = true
+    var repeatsKeys: Bool {
+        get { keyRepeats ?? false }
+        set { keyRepeats = newValue }
+    }
 
     /// Apply before sampling AND execution. Releases for already-held input always
     /// remain valid so changing permissions cannot strand a key or button.
@@ -66,6 +76,7 @@ struct ActionCapabilities: Codable, Equatable, Sendable {
             return keys.contains(code) && !state.keys.contains(code)
                 && state.keys.count < maximumHeldKeys && (chords || state.keys.isEmpty)
         case .keyUp(let code): return state.keys.contains(code)
+        case .keyRepeat(let code): return repeatsKeys && keys.contains(code) && state.keys.contains(code) && !(54...63).contains(code)
         case .buttonDown(let button): return buttons.contains(button) && !state.buttons.contains(button)
         case .buttonUp(let button): return state.buttons.contains(button)
         case .pointer(let x, let y):
@@ -90,6 +101,10 @@ struct InputTransition: Codable, Equatable, Identifiable, Sendable {
     var cursorY: Double? = nil
     var rawDeltaX: Int64? = nil
     var rawDeltaY: Int64? = nil
+    var learningAction: ComputerAction {
+        if isRepeat, case .keyDown(let code) = action { return .keyRepeat(code: code) }
+        return action
+    }
 }
 
 enum KeyNames {

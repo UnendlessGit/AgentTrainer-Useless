@@ -13,6 +13,11 @@ struct PolicyActionCodec: Sendable {
         if capabilities.scrolling { actions.append(.scroll(dx: 0, dy: 0)) }
         for key in capabilities.keys.sorted() { actions.append(.keyDown(code: key)); actions.append(.keyUp(code: key)) }
         for button in capabilities.buttons.sorted() { actions.append(.buttonDown(button: button)); actions.append(.buttonUp(button: button)) }
+        // Capability extension preserves existing configurations' token order,
+        // tensor shapes and checkpoint fingerprint.
+        if capabilities.repeatsKeys {
+            for key in capabilities.keys.sorted() where !(54...63).contains(key) { actions.append(.keyRepeat(code: key)) }
+        }
         self.actions = actions
     }
 
