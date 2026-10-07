@@ -10,12 +10,31 @@ final class PolicyNetworkTests: XCTestCase {
         let targets = MLXArray([Int32(0), 1, 2, 0], [1, 4])
         let valid = MLXArray([Float(1), 1, 1, 0], [1, 4])
         let mask = MLXArray([Float(0), 0, 0, 0, 0, 0, -1e9, -1e9, 0, 0, 0, 0], [1, 4, 3])
-        let result = ActionEvaluation.measure(logits: logits, targets: targets, valid: valid, mask: mask)
+        let result = ActionEvaluation.measure(logits: logits, targets: targets, valid: valid, mask: mask,
+            actions: [.wait(seconds: 0), .keyDown(code: 0), .keyUp(code: 0)])
         XCTAssertEqual(result.total, 3); XCTAssertEqual(result.correct, 2)
         XCTAssertEqual(result.nonWaitTotal, 2); XCTAssertEqual(result.nonWaitCorrect, 1)
         XCTAssertEqual(result.nonWaitPredictions, 1)
         XCTAssertEqual(result.nonWaitAccuracy, 0.5); XCTAssertEqual(result.nonWaitPrecision, 1)
         XCTAssertNil(ActionEvaluation().accuracy)
+        XCTAssertEqual(result.actionBreakdown?.map(\.targets), [1, 1, 1])
+        XCTAssertEqual(result.actionBreakdown?.map(\.correct), [1, 0, 1])
+        XCTAssertEqual(result.actionBreakdown?.map(\.predictions), [2, 0, 1])
+        var combined = ActionEvaluation(); combined.add(result); combined.add(result)
+        XCTAssertEqual(combined.total, 6)
+        XCTAssertEqual(combined.actionBreakdown?.map(\.targets), [2, 2, 2])
+        XCTAssertEqual(combined.actionBreakdown?.map(\.correct), [2, 0, 2])
+        XCTAssertEqual(combined.actionBreakdown?.map(\.predictions), [4, 0, 2])
+    }
+
+    func testLegacyEvaluationDecodesWithoutInventingPerActionCounts() throws {
+        let data = Data(#"{"correct":14,"total":20,"nonWaitCorrect":14,"nonWaitTotal":20,"nonWaitPredictions":14}"#.utf8)
+        var legacy = try JSONDecoder().decode(ActionEvaluation.self, from: data)
+        XCTAssertNil(legacy.actionBreakdown)
+        legacy.add(ActionEvaluation(correct: 1, total: 1, actionBreakdown: [
+            .init(token: 0, action: .wait(seconds: 0), correct: 1, targets: 1, predictions: 1)]))
+        XCTAssertEqual(legacy.total, 21)
+        XCTAssertNil(legacy.actionBreakdown)
     }
 
     private func configuration(_ architecture: TemporalArchitecture) -> PolicyConfiguration {

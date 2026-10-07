@@ -108,6 +108,24 @@ struct TrainView: View {
                 }
                 Text("\(evaluation.total.formatted()) held-out decisions, including \(evaluation.nonWaitTotal.formatted()) non-wait actions. Evaluation uses recorded history; use Run to verify closed-loop behavior.")
                     .font(.caption).foregroundStyle(.secondary)
+                if let rows = evaluation.actionBreakdown {
+                    DisclosureGroup("Validation by action") {
+                        Grid(alignment: .leading, horizontalSpacing: 30, verticalSpacing: 8) {
+                            GridRow {
+                                Text("Action"); Text("Correct / demonstrated"); Text("Predicted")
+                            }.fontWeight(.medium)
+                            ForEach(rows) { row in
+                                GridRow {
+                                    Text(row.token == 0 ? "Wait" : row.action.label)
+                                    Text("\(row.correct) / \(row.targets)")
+                                    Text(row.predictions.formatted())
+                                }
+                            }
+                        }.font(.caption).padding(.top, 8)
+                        Text("Key presses and releases are separate targets. Correct releases do not establish that the model chose the right key to press.")
+                            .font(.caption).foregroundStyle(.secondary).padding(.top, 4)
+                    }
+                }
             }
             HStack(spacing: 25) {
                 Metric(title: "STEPS / SECOND", value: String(format: "%.2f", p.stepsPerSecond))

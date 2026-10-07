@@ -132,28 +132,65 @@ enum PolicyLoss {
 /// Counts aggregate across recordings without averaging unequal-sized batches.
 /// Non-wait accuracy exposes a policy that achieves high accuracy by doing nothing.
 struct ActionEvaluation: Codable, Equatable, Sendable {
+    struct ActionCounts: Codable, Equatable, Identifiable, Sendable {
+        var token: Int
+        var action: ComputerAction
+        var correct: Int
+        var targets: Int
+        var predictions: Int
+        var id: Int { token }
+    }
+
     var correct = 0
     var total = 0
     var nonWaitCorrect = 0
     var nonWaitTotal = 0
     var nonWaitPredictions = 0
+    // Optional so older checkpoint manifests remain readable.
+    var actionBreakdown: [ActionCounts]?
     var accuracy: Double? { total > 0 ? Double(correct) / Double(total) : nil }
     var nonWaitAccuracy: Double? { nonWaitTotal > 0 ? Double(nonWaitCorrect) / Double(nonWaitTotal) : nil }
     var nonWaitPrecision: Double? { nonWaitPredictions > 0 ? Double(nonWaitCorrect) / Double(nonWaitPredictions) : nil }
 
     mutating func add(_ other: Self) {
+        if total == 0 {
+            actionBreakdown = other.actionBreakdown
+        } else if other.total > 0 {
+            if let own = actionBreakdown, let incoming = other.actionBreakdown {
+                var merged = Dictionary(uniqueKeysWithValues: own.map { ($0.token, $0) })
+                for row in incoming {
+                    if var old = merged[row.token] {
+                        old.correct += row.correct; old.targets += row.targets; old.predictions += row.predictions
+                        merged[row.token] = old
+                    } else { merged[row.token] = row }
+                }
+                actionBreakdown = merged.values.sorted { $0.token < $1.token }
+            } else { actionBreakdown = nil } // Never display a partial breakdown as the whole evaluation.
+        }
         correct += other.correct; total += other.total; nonWaitCorrect += other.nonWaitCorrect
         nonWaitTotal += other.nonWaitTotal; nonWaitPredictions += other.nonWaitPredictions
     }
 
-    static func measure(logits: MLXArray, targets: MLXArray, valid: MLXArray, mask: MLXArray) -> Self {
+    static func measure(logits: MLXArray, targets: MLXArray, valid: MLXArray, mask: MLXArray,
+                        actions: [ComputerAction]) -> Self {
         let prediction = argMax(logits + mask, axis: -1)
-        let correct = (prediction .== targets).asType(.float32) * valid
-        // The shared codec always assigns token zero to wait.
-        let nonWait = (targets .!= 0).asType(.float32)
-        let counts = stacked([sum(correct), sum(valid), sum(correct * nonWait), sum(valid * nonWait),
-                              sum((prediction .!= 0).asType(.float32) * valid)]).asArray(Float.self)
-        return Self(correct: Int(counts[0]), total: Int(counts[1]), nonWaitCorrect: Int(counts[2]),
-                    nonWaitTotal: Int(counts[3]), nonWaitPredictions: Int(counts[4]))
+        let tokens = MLXArray((0..<actions.count).map(Int32.init))
+        let targetColumns = (targets.reshaped([-1, 1]) .== tokens).asType(.float32)
+        let predictionColumns = (prediction.reshaped([-1, 1]) .== tokens).asType(.float32)
+        let weights = valid.reshaped([-1, 1])
+        // Reduce on Metal and read only three counts per vocabulary entry.
+        let counts = stacked([sum(targetColumns * predictionColumns * weights, axis: 0),
+                              sum(targetColumns * weights, axis: 0), sum(predictionColumns * weights, axis: 0)])
+            .asArray(Float.self)
+        let n = actions.count
+        let rows = actions.enumerated().map { token, action in
+            ActionCounts(token: token, action: action, correct: Int(counts[token]),
+                         targets: Int(counts[n + token]), predictions: Int(counts[2 * n + token]))
+        }
+        let nonWait = rows.dropFirst() // The shared codec assigns token zero to wait.
+        return Self(correct: rows.reduce(0) { $0 + $1.correct }, total: rows.reduce(0) { $0 + $1.targets },
+                    nonWaitCorrect: nonWait.reduce(0) { $0 + $1.correct }, nonWaitTotal: nonWait.reduce(0) { $0 + $1.targets },
+                    nonWaitPredictions: nonWait.reduce(0) { $0 + $1.predictions },
+                    actionBreakdown: rows.filter { $0.targets > 0 || $0.predictions > 0 })
     }
 }

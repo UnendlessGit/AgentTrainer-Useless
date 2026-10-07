@@ -219,7 +219,8 @@ enum TrainingWorker {
                             if stage == .imitation {
                                 evaluation.add(ActionEvaluation.measure(logits: output.actionLogits,
                                     targets: batch.arrays[BatchField.actions.rawValue], valid: batch.arrays[BatchField.valid.rawValue],
-                                    mask: batch.arrays[BatchField.actionMask.rawValue]))
+                                    mask: batch.arrays[BatchField.actionMask.rawValue],
+                                    actions: PolicyActionCodec(capabilities: model.configuration.capabilities).actions))
                             }
                         }
                     }
