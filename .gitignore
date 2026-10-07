@@ -1,0 +1,11 @@
+.DS_Store
+.tools/
+.build/
+build/
+dist/
+*.xcuserstate
+xcuserdata/
+*.xcresult/
+.validation/
+*.agentrecording/
+*.safetensors
