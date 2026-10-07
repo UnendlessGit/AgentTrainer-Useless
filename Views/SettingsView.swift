@@ -1,0 +1,81 @@
+import SwiftUI
+
+struct SettingsView: View {
+    var session: AppSession
+    @State private var moving = false
+    private var store: WorkspaceStore { session.store }
+    private var permissions: PermissionService { session.recorder.permissions }
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                PageHeader(title: "Settings", subtitle: "A workspace that fits your Mac and your workflow.") { EmptyView() }
+                Surface(title: "Permissions", symbol: "lock.shield") {
+                    permissionRow("Screen Recording", detail: "Capture the display, window or region you select.", granted: permissions.screenRecording,
+                                  request: permissions.requestScreenRecording, pane: "Privacy_ScreenCapture")
+                    Divider()
+                    permissionRow("Input Monitoring", detail: "Record timestamped keyboard and pointer transitions.", granted: permissions.inputMonitoring,
+                                  request: permissions.requestInputMonitoring, pane: "Privacy_ListenEvent")
+                    Divider()
+                    permissionRow("Accessibility", detail: "Execute permitted model actions and stop safely.", granted: permissions.accessibility,
+                                  request: permissions.requestAccessibility, pane: "Privacy_Accessibility")
+                    Button("Refresh permission status") { permissions.refresh() }
+                }
+                Surface(title: "Storage", symbol: "externaldrive") {
+                    storageRow("Recordings", path: store.preferences.recordingsPath, keyPath: \.recordingsPath)
+                    Divider()
+                    storageRow("Models", path: store.preferences.modelsPath, keyPath: \.modelsPath)
+                    Divider()
+                    storageRow("Checkpoints & cache", path: store.preferences.checkpointsPath, keyPath: \.checkpointsPath)
+                    Text("Changing a location copies the data first and preserves the original folder. Choose an empty destination.").font(.caption).foregroundStyle(.secondary)
+                    if moving { ProgressView("Copying and verifying data…") }
+                }
+                Surface(title: "Appearance & resources", symbol: "slider.horizontal.3") {
+                    Picker("Appearance", selection: preference(\.appearance)) { ForEach(["System", "Light", "Dark"], id: \.self) { Text($0).tag($0) } }.frame(maxWidth: 380)
+                    Picker("MLX memory limit", selection: preference(\.memoryLimitGB)) { ForEach([4, 8, 12, 16, 24], id: \.self) { Text("\($0) GB").tag($0) } }.frame(maxWidth: 380)
+                    Picker("MLX cache limit", selection: preference(\.cacheLimitGB)) { ForEach([0, 1, 2, 4, 8], id: \.self) { Text("\($0) GB").tag($0) } }.frame(maxWidth: 380)
+                    Toggle("Stop runs on human input by default", isOn: preference(\.stopOnHumanInput))
+                }
+                Surface(title: "Keyboard shortcuts", symbol: "keyboard") {
+                    LabeledContent("New recording", value: "⌘N")
+                    LabeledContent("Stop recording (in AgentTrainer)", value: "⇧⌘R")
+                    LabeledContent("Emergency stop (in AgentTrainer)", value: "⇧⌘Esc")
+                    Text("Global configurable shortcuts will be enabled with the run controller.").font(.caption).foregroundStyle(.secondary)
+                }
+            }.padding(30)
+        }.task { permissions.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in permissions.refresh() }
+    }
+
+    private func preference<T>(_ keyPath: WritableKeyPath<AppPreferences, T>) -> Binding<T> {
+        Binding(get: { store.preferences[keyPath: keyPath] }, set: { value in
+            var updated = store.preferences; updated[keyPath: keyPath] = value
+            store.perform { try store.savePreferences(updated) }
+        })
+    }
+    private func permissionRow(_ title: String, detail: String, granted: Bool, request: @escaping () -> Void, pane: String) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 5) { Text(title).fontWeight(.medium); Text(detail).font(.caption).foregroundStyle(.secondary) }
+            Spacer()
+            if granted { Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(.green).font(.callout) }
+            else { Button("Allow", action: request) }
+            Button { permissions.openPrivacy(pane) } label: { Image(systemName: "arrow.up.right.square") }.help("Open macOS privacy settings")
+        }
+    }
+    private func storageRow(_ title: String, path: String, keyPath: WritableKeyPath<AppPreferences, String>) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 5) { Text(title).fontWeight(.medium); Text(path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
+            Spacer()
+            Button("Change…") {
+                let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
+                panel.message = "Choose an empty folder for \(title.lowercased()). Your existing data will be copied and preserved."
+                guard panel.runModal() == .OK, let destination = panel.url else { return }
+                moving = true
+                Task {
+                    do { try await store.relocateStorage(keyPath, to: destination) }
+                    catch { store.error = error.localizedDescription }
+                    moving = false
+                }
+            }.disabled(moving || session.recorder.isBusy)
+        }
+    }
+}

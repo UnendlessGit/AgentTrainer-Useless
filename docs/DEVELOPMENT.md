@@ -17,6 +17,8 @@ The acceptance contract is [OBJECTIVE.md](OBJECTIVE.md). The project is not comp
 
 ## Engineering constraints
 
+No individual test, training run, benchmark, stability run, architecture comparison or validation task may exceed 20–30 minutes without an explicit request for a longer run. Prefer short representative runs; split validation into bounded cases.
+
 All application execution, recording, learning and inference are local. No telemetry or runtime network dependency. Build-time package downloads are pinned. Never ad hoc sign app builds; fail if the configured Apple Development identity is unavailable.
 
 Record event transitions on a monotonic clock independently of capture cadence. Observations carry both source display time and availability time. Never train an earlier action against pixels from its future. Keep original data immutable; use editable metadata overlays. Durable manifests must be atomically replaced after their referenced data is flushed. Interrupted artifacts remain inspectable and are never silently called complete.

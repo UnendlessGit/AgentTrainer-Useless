@@ -1,0 +1,64 @@
+name: AgentTrainer
+options:
+  bundleIdPrefix: com.agenttrainer
+  deploymentTarget:
+    macOS: '15.0'
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: '6.0'
+    MACOSX_DEPLOYMENT_TARGET: '15.0'
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: 1E3F98C6916444AFAAD362575B0DA874E73D992E
+    DEVELOPMENT_TEAM: V5S6J7KC33
+    ENABLE_HARDENED_RUNTIME: YES
+    SWIFT_STRICT_CONCURRENCY: complete
+packages:
+  MLX:
+    url: https://github.com/ml-explore/mlx-swift.git
+    exactVersion: 0.32.3
+targets:
+  AgentTrainer:
+    type: application
+    platform: macOS
+    sources:
+      - App
+      - Views
+      - Models
+      - Stores
+      - Services
+      - Support
+      - Core
+    dependencies:
+      - package: MLX
+        product: MLX
+      - package: MLX
+        product: MLXNN
+      - package: MLX
+        product: MLXOptimizers
+      - package: MLX
+        product: MLXRandom
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.agenttrainer.AgentTrainer
+        INFOPLIST_FILE: Resources/Info.plist
+        COMBINE_HIDPI_IMAGES: YES
+        ENABLE_APP_SANDBOX: NO
+        SWIFT_EMIT_LOC_STRINGS: YES
+  AgentTrainerTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [Tests]
+    dependencies:
+      - target: AgentTrainer
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  AgentTrainer:
+    build:
+      targets:
+        AgentTrainer: all
+    test:
+      targets:
+        - AgentTrainerTests

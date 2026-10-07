@@ -380,6 +380,8 @@ Do not consider the project finished merely because:
 
 Those are useful checks but are not sufficient.
 
+No single test, training run, benchmark, stability run, architecture comparison, or validation task should exceed 20–30 minutes unless I explicitly request a longer run. Prefer shorter representative runs over exhaustive long-running ones.
+
 Validate the application through the **same normal user-facing workflows** I will use.
 
 Test the actual flow:
