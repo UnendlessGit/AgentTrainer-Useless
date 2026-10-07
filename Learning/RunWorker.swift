@@ -11,7 +11,6 @@ struct RunRequest: Sendable {
 
 enum RunWorker {
     static func run(_ request: RunRequest, source: CaptureFrameSource, clock: SessionClock, executor: AgentInputExecutor,
-                    humanState: @escaping @Sendable () -> InputState,
                     publish: @escaping @Sendable (RunProgress, CapturedScene?) -> Void,
                     finished: @escaping @Sendable (String) -> Void) {
         var progress = RunProgress()
@@ -23,6 +22,7 @@ enum RunWorker {
             Memory.clearCache(); finished(executor.stopReason ?? "Run stopped.")
         }
         do {
+            try request.preferences.validate()
             let configuration = request.model.configuration
             try configuration.validate()
             let checkpoints = CheckpointStore(root: URL(fileURLWithPath: request.preferences.checkpointsPath))
@@ -44,8 +44,8 @@ enum RunWorker {
             var previous: ComputerAction = .wait(seconds: 0), previousTime = start, lastPublish = start
             while !executor.isStopped && clock.now < deadline {
                 try autoreleasepool {
-                    let human = humanState()
-                    if !human.keys.isEmpty || !human.buttons.isEmpty {
+                    let human = executor.humanInput
+                    if human.isHeld {
                         if request.configuration.stopOnHumanInput { executor.stop("Stopped by keyboard or mouse input."); return }
                         // In sharing mode, human-held modifiers/buttons must never
                         // combine with a new agent press. Resume after release.
@@ -64,18 +64,20 @@ enum RunWorker {
                     let decision = try runner.decide(scene: scene, state: executor.state, previousAction: previous,
                         elapsed: Double(decisionTime - min(decisionTime, previousTime)) / 1e9,
                         sourceAge: Double(decisionTime - min(decisionTime, scene.sourceTime)) / 1e9,
-                        deterministic: request.configuration.deterministic, temperature: request.configuration.temperature)
+                        deterministic: request.configuration.deterministic, temperature: request.configuration.temperature, commitMemory: false)
                     let scheduled = decisionTime + UInt64(decision.delay * 1e9)
-                    while clock.now < scheduled && !executor.isStopped && clock.now < deadline {
+                    while clock.now < scheduled && !executor.isStopped && clock.now < deadline && executor.humanInput.revision == human.revision {
                         Thread.sleep(forTimeInterval: min(0.005, Double(scheduled - min(scheduled, clock.now)) / 1e9))
                     }
                     guard !executor.isStopped, clock.now < deadline else { return }
-                    let beforeEmission = humanState()
-                    guard beforeEmission.keys.isEmpty, beforeEmission.buttons.isEmpty else {
-                        throw DataIntegrityError.invalidData("Human input began during a decision. The run stopped before emitting that action.")
+                    guard executor.humanInput.revision == human.revision else {
+                        runner.discardDecision(); return
                     }
                     try request.target.validate(observedBounds: decision.observationBounds, action: decision.action, state: executor.state)
-                    try executor.execute(decision.action, bounds: decision.observationBounds)
+                    guard try executor.execute(decision.action, bounds: decision.observationBounds, humanRevision: human.revision) else {
+                        runner.discardDecision(); return
+                    }
+                    runner.commitDecision()
                     previous = decision.action; previousTime = clock.now
                     progress.record(decision.action); progress.elapsed = Double(clock.now - start) / 1e9
                     progress.inferenceMilliseconds = decision.inferenceSeconds * 1000

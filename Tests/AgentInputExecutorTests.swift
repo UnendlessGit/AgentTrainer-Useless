@@ -12,6 +12,35 @@ private final class CapturedInputEvents: @unchecked Sendable {
 }
 
 final class AgentInputExecutorTests: XCTestCase {
+    func testHumanSharingDiscardsStaleDecisionsAndResumesAfterRelease() throws {
+        let events = CapturedInputEvents()
+        let executor = AgentInputExecutor(capabilities: ActionCapabilities(), emit: events.append)
+        let bounds = CaptureRect(CGRect(x: 0, y: 0, width: 100, height: 100))
+        let oldRevision = executor.humanInput.revision
+        executor.observeHumanInput(InputState(keys: [56]), stopOnInput: false)
+        XCTAssertFalse(try executor.execute(.keyDown(code: 0), bounds: bounds, humanRevision: executor.humanInput.revision))
+        executor.observeHumanInput(InputState(), stopOnInput: false)
+        XCTAssertFalse(try executor.execute(.keyDown(code: 0), bounds: bounds, humanRevision: oldRevision), "Even a completed human press invalidates a pending action.")
+        XCTAssertTrue(events.values.isEmpty)
+        XCTAssertFalse(executor.isStopped)
+        XCTAssertTrue(try executor.execute(.keyDown(code: 0), bounds: bounds, humanRevision: executor.humanInput.revision))
+        executor.observeHumanInput(InputState(keys: [56]), stopOnInput: false)
+        XCTAssertTrue(executor.isStopped)
+        XCTAssertEqual(executor.stopReason, "Human input conflicted with input held by the agent.")
+        XCTAssertEqual(events.values.map { $0.0 }, [.keyDown, .keyUp])
+        XCTAssertEqual(events.values.map { $0.1 }, [0, 0], "Cleanup releases only agent-owned input, not the human modifier.")
+        XCTAssertTrue(executor.state.keys.isEmpty)
+    }
+
+    func testHumanStopAlsoHandlesPointerInputWithoutHeldKeys() throws {
+        let events = CapturedInputEvents()
+        let executor = AgentInputExecutor(capabilities: ActionCapabilities(), emit: events.append)
+        executor.observeHumanInput(InputState(cursorX: 12, cursorY: 14), stopOnInput: true)
+        XCTAssertTrue(executor.isStopped)
+        XCTAssertEqual(executor.stopReason, "Stopped by keyboard or mouse input.")
+        XCTAssertTrue(events.values.isEmpty)
+    }
+
     func testExplicitRepeatRequiresOwnedKeyAndDoesNotRestartHoldDeadline() throws {
         let events = CapturedInputEvents()
         let executor = AgentInputExecutor(capabilities: ActionCapabilities(), emit: events.append)

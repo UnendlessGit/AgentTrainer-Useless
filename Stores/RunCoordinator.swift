@@ -28,11 +28,11 @@ final class RunCoordinator {
     }
 
     func saveConfiguration() {
-        store.perform { try AtomicFile.encode(configuration, to: store.supportURL.appendingPathComponent("run-configuration.json")) }
+        store.perform { try store.requireWritable(); try AtomicFile.encode(configuration, to: store.supportURL.appendingPathComponent("run-configuration.json")) }
     }
 
     func start() async {
-        guard !isBusy, !store.migrating, store.activeOperations.isEmpty else { return }
+        guard store.canAccessWorkspace, !isBusy, !store.migrating, store.activeOperations.isEmpty else { return }
         guard let model = store.models.first(where: { $0.id == configuration.modelID }), model.canRun else {
             store.error = "Select a model with a compatible imitation-learning checkpoint."; return
         }
@@ -79,15 +79,15 @@ final class RunCoordinator {
                 Task { @MainActor in self?.stop(reason) }
             })
             capture = source
-            let monitor = InputCapture(clock: clock, settings: settings, onEvent: { event in
-                if configuration.stopOnHumanInput { executor.stop("Stopped by keyboard or mouse input.") }
-                else {
-                    let owned = executor.state
-                    if !owned.keys.isEmpty || !owned.buttons.isEmpty { executor.stop("Human input conflicted with input held by the agent.") }
-                }
-            }, onFailure: { reason in executor.stop(reason) })
+            let monitor = InputCapture(clock: clock, settings: settings, onInput: { state in
+                executor.observeHumanInput(state, stopOnInput: configuration.stopOnHumanInput)
+            }, onEvent: { _ in }, onFailure: { reason in executor.stop(reason) })
             self.monitor = monitor
             try monitor.start()
+            let initialHuman = monitor.snapshot
+            if !initialHuman.keys.isEmpty || !initialHuman.buttons.isEmpty {
+                executor.observeHumanInput(initialHuman, stopOnInput: configuration.stopOnHumanInput)
+            }
             try await source.start(parts: parts)
             guard generation == id, !executor.isStopped else { await finish(id: id, reason: executor.stopReason ?? "Stopped before starting."); return }
             let request = RunRequest(model: model, configuration: configuration, preferences: store.preferences,
@@ -96,7 +96,7 @@ final class RunCoordinator {
             phase = .running; message = "Running locally · \((store.preferences.shortcuts ?? ShortcutBindings()).emergency.label) stops immediately"
             workerRunning = true
             TrainingWorker.queue.async { [self] in
-                RunWorker.run(request, source: source, clock: clock, executor: executor, humanState: { monitor.snapshot }, publish: { update, scene in
+                RunWorker.run(request, source: source, clock: clock, executor: executor, publish: { update, scene in
                     DispatchQueue.main.async { [self] in
                         guard generation == id else { return }
                         progress = update

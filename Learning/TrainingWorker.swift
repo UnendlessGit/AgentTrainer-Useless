@@ -82,6 +82,7 @@ enum TrainingWorker {
             if Date() >= deadline { throw DataIntegrityError.invalidData("The run's time budget ended during data preparation. Use fewer recordings for this run.") }
         }
         do {
+            try request.preferences.validate()
             try request.settings.validate()
             try request.model.configuration.validate()
             let estimate = request.model.configuration.estimatedWorkingSetBytes(batchSize: request.settings.batchSize)

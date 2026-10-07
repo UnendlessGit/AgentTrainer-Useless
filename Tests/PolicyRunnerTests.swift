@@ -13,6 +13,7 @@ final class PolicyRunnerTests: XCTestCase {
             c.capabilities.keys = [0]; c.capabilities.buttons = []; c.capabilities.scrolling = false; c.capabilities.pointer = false
             let model = PolicyNetwork(configuration: c)
             let runner = PolicyRunner(model: model, permissions: c.capabilities, instruction: "")
+            let reference = PolicyRunner(model: model, permissions: c.capabilities, instruction: "")
             let provider = try XCTUnwrap(CGDataProvider(data: Data([255, 20, 40, 255]) as CFData))
             let image = try XCTUnwrap(CGImage(width: 1, height: 1, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 4,
                 space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
@@ -21,8 +22,23 @@ final class PolicyRunnerTests: XCTestCase {
                 sourceTime: 0, availableTime: 10, generation: 1, reusedPixels: false)
             var state = InputState(), previous = ComputerAction.wait(seconds: 0)
             for _ in 0..<6 {
+                // A pending decision, invalidated by human input, must leave no
+                // extra recurrent step or attention-history entry behind.
+                _ = try runner.decide(scene: scene, state: state, previousAction: previous,
+                    elapsed: 0.1, sourceAge: 0.1, deterministic: true, temperature: 1, commitMemory: false)
+                runner.discardDecision()
+                XCTAssertEqual(runner.memory.history.count, reference.memory.history.count)
+                XCTAssertEqual(runner.memory.hidden.count, reference.memory.hidden.count)
+                for (actual, expected) in zip(runner.memory.hidden, reference.memory.hidden) {
+                    XCTAssertEqual(max(abs(actual - expected)).item(Float.self), 0)
+                }
                 let decision = try runner.decide(scene: scene, state: state, previousAction: previous,
+                    elapsed: 0.1, sourceAge: 0.1, deterministic: true, temperature: 1, commitMemory: false)
+                runner.commitDecision()
+                let expected = try reference.decide(scene: scene, state: state, previousAction: previous,
                     elapsed: 0.1, sourceAge: 0.1, deterministic: true, temperature: 1)
+                XCTAssertEqual(decision.action, expected.action)
+                XCTAssertEqual(decision.delay, expected.delay)
                 XCTAssertTrue(c.capabilities.permits(decision.action, state: state))
                 XCTAssertTrue(decision.delay.isFinite)
                 state.apply(decision.action); previous = decision.action

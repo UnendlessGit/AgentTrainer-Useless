@@ -28,11 +28,15 @@ struct RunProgress: Sendable {
 /// Uses the same preprocessing, codec, grammar and recurrent carry as training.
 /// Bounded attention caches frozen visual features, avoiding repeated image encoding.
 final class PolicyRunner {
+    struct MemoryState {
+        var hidden: [MLXArray] = []
+        var history: [[MLXArray]] = []
+    }
     private let model: PolicyNetwork
     private let codec: PolicyActionCodec
     private let permissions: ActionCapabilities
-    private var hidden: [MLXArray] = []
-    private var history: [[MLXArray]] = []
+    private(set) var memory = MemoryState()
+    private var pendingMemory: MemoryState?
     private let instruction: MLXArray
 
     init(model: PolicyNetwork, permissions: ActionCapabilities, instruction: String) {
@@ -42,7 +46,9 @@ final class PolicyRunner {
     }
 
     func decide(scene: CapturedScene, state: InputState, previousAction: ComputerAction, elapsed: Double,
-                sourceAge: Double, deterministic: Bool, temperature: Float) throws -> PolicyDecision {
+                sourceAge: Double, deterministic: Bool, temperature: Float, commitMemory: Bool = true) throws -> PolicyDecision {
+        pendingMemory = nil
+        var history = memory.history
         let start = ProcessInfo.processInfo.systemUptime, c = model.configuration
         let image = try ObservationPreprocessor.pixels(scene.image, size: c.imageSize).reshaped([1, 1, c.imageSize, c.imageSize, 3])
         let crop = c.detailCrop ? try ObservationPreprocessor.detailCrop(scene.image, state: state, bounds: scene.bounds, size: c.imageSize)
@@ -70,7 +76,7 @@ final class PolicyRunner {
         let output = model(images: images, crops: c.detailCrop ? crops : nil, context: contexts, previousActions: previousActions,
             instructions: broadcast(instruction, to: [1, length, PolicyNetwork.instructionLength]),
             dynamicsActions: MLXArray.zeros([1, length], type: Int32.self), dynamicsArguments: MLXArray.zeros([1, length, 2]),
-            hidden: hidden, encodedVision: encodedVision, encodedDetail: encodedDetail)
+            hidden: memory.hidden, encodedVision: encodedVision, encodedDetail: encodedDetail)
         let last = length - 1
         let logits = output.actionLogits[0, last] + MLXArray(codec.mask(state: state, capabilities: permissions))
         func choose(_ logits: MLXArray) -> MLXArray {
@@ -93,7 +99,7 @@ final class PolicyRunner {
         let spatialY = (floor(patch.asType(.float32) / Float(grid)) + offset[1]) / Float(grid)
         // Gather all selected arguments in one GPU-to-CPU readback.
         let selected = stacked([token.asType(.float32), spatialX, spatialY, continuous[0], continuous[1], delay.asType(.float32)])
-        hidden = output.hidden.map { stopGradient($0) }
+        let hidden = output.hidden.map { stopGradient($0) }
         eval(selected, hidden)
         let values = selected.asArray(Float.self)
         guard values.allSatisfy(\.isFinite) else { throw DataIntegrityError.invalidData("The model produced non-finite predictions.") }
@@ -105,7 +111,18 @@ final class PolicyRunner {
         if case .pointer = codec.actions[id] { isPointer = true } else { isPointer = false }
         let action = try codec.decode(token: id, x: Double(values[isPointer ? 1 : 3]), y: Double(values[isPointer ? 2 : 4]),
             delay: PolicyNetwork.delayBins[delayIndex], bounds: scene.bounds)
+        pendingMemory = MemoryState(hidden: hidden, history: history)
+        if commitMemory { commitDecision() }
         return PolicyDecision(action: action, delay: PolicyNetwork.delayBins[delayIndex],
             inferenceSeconds: ProcessInfo.processInfo.systemUptime - start, observationBounds: scene.bounds)
     }
+
+    /// A decision can become stale while waiting for its predicted timing. Only
+    /// actions actually executed advance memory or the bounded attention history.
+    func commitDecision() {
+        if let pendingMemory { memory = pendingMemory }
+        pendingMemory = nil
+    }
+
+    func discardDecision() { pendingMemory = nil }
 }

@@ -12,6 +12,8 @@ final class WorkspaceStore {
     var activeOperations: Set<String> = []
     var error: String?
     var notice: String?
+    private var preferencesFailure: String?
+    var canAccessWorkspace: Bool { preferencesFailure == nil }
 
     let supportURL: URL
     private var preferencesURL: URL { supportURL.appendingPathComponent("preferences.json") }
@@ -24,13 +26,24 @@ final class WorkspaceStore {
             .appendingPathComponent("AgentTrainer", isDirectory: true)
         let preferenceFile = self.supportURL.appendingPathComponent("preferences.json")
         if FileManager.default.fileExists(atPath: preferenceFile.path) {
-            do { preferences = try AtomicFile.decode(AppPreferences.self, from: preferenceFile) }
-            catch { preferences = .defaults(at: self.supportURL); self.error = "Preferences could not be read: \(error.localizedDescription)" }
+            do {
+                var saved = try AtomicFile.decode(AppPreferences.self, from: preferenceFile)
+                try saved.validateStorage()
+                let repaired = saved.repairOptionalSettings()
+                preferences = saved
+                if !repaired.isEmpty {
+                    notice = "Restored defaults for invalid \(repaired.joined(separator: ", ")). Your storage locations and original preferences file are preserved."
+                }
+            } catch {
+                preferences = .defaults(at: self.supportURL)
+                let message = "Preferences could not be read: \(error.localizedDescription) Restore \(preferenceFile.path) and reopen AgentTrainer. Workspace writes are disabled; the original file is preserved."
+                preferencesFailure = message; self.error = message
+            }
         } else { preferences = .defaults(at: self.supportURL) }
     }
 
     func load() async {
-        guard !loading, activeOperations.isEmpty else { return }
+        guard canAccessWorkspace, !loading, activeOperations.isEmpty else { return }
         loading = true
         defer { loading = false }
         let recordingRoot = recordingRoot, modelRoot = modelRoot
@@ -230,6 +243,9 @@ final class WorkspaceStore {
     }
 
     func savePreferences(_ updated: AppPreferences) throws {
+        // Relocation commits its verified destination while `migrating` is set.
+        if let preferencesFailure { throw DataIntegrityError.io(preferencesFailure) }
+        try updated.validate()
         try AtomicFile.encode(updated, to: preferencesURL)
         preferences = updated
     }
@@ -245,6 +261,7 @@ final class WorkspaceStore {
     func perform(_ action: () throws -> Void) { do { try action() } catch { self.error = error.localizedDescription } }
 
     func requireWritable() throws {
+        if let preferencesFailure { throw DataIntegrityError.io(preferencesFailure) }
         guard !migrating else { throw DataIntegrityError.io("Wait for the storage move to finish before changing the workspace.") }
     }
 

@@ -70,6 +70,8 @@ schemes:
       targets:
         AgentTrainer: all
     test:
+      environmentVariables:
+        AGENTTRAINER_UNIT_TESTING: "1"
       targets:
         - AgentTrainerTests
   AgentTrainerUI:

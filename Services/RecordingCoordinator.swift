@@ -20,7 +20,7 @@ final class RecordingCoordinator {
     init(store: WorkspaceStore) { self.store = store }
 
     func start(name: String, instruction: String, folderID: UUID?, target: CaptureTarget, settings: RecordingSettings) async {
-        guard phase == .idle else { return }
+        guard store.canAccessWorkspace, phase == .idle else { return }
         guard !store.migrating, store.activeOperations.isEmpty else { store.error = "Finish the active operation before recording."; return }
         guard let folder = store.folders.first(where: { $0.id == folderID }) else { store.error = "Choose a Library folder for this recording."; return }
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { store.error = "Give this recording a name."; return }

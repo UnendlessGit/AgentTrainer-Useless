@@ -17,6 +17,9 @@ extension WorkspaceStore {
         guard !otherRoots.contains(where: { destination.path == $0 || destination.path.hasPrefix($0 + "/") || $0.hasPrefix(destination.path + "/") }) else {
             throw DataIntegrityError.invalidData("Recordings, models and checkpoints need separate storage folders.")
         }
+        var updated = preferences
+        updated[keyPath: keyPath] = destination.path
+        try updated.validate()
         try await Task.detached(priority: .utility) {
             let fm = FileManager.default
             try fm.createDirectory(at: destination, withIntermediateDirectories: true)
@@ -27,17 +30,27 @@ extension WorkspaceStore {
                 try fm.copyItem(at: file, to: destination.appendingPathComponent(file.lastPathComponent))
             }
             // Streaming hashes verify content without loading large recordings into memory.
-            let enumerator = fm.enumerator(at: source, includingPropertiesForKeys: [.isRegularFileKey])
-            while let file = enumerator?.nextObject() as? URL {
+            var enumerationError: Error?
+            guard let enumerator = fm.enumerator(at: source, includingPropertiesForKeys: [.isRegularFileKey], errorHandler: { _, error in
+                enumerationError = error; return false
+            }) else { throw DataIntegrityError.io("The source storage folder could not be enumerated for verification.") }
+            while let entry = enumerator.nextObject() as? URL {
+                // Foundation may enumerate /var via /private/var even when its
+                // root URL uses the shorter spelling. Normalize both before
+                // deriving a relative path; never slice an unrelated prefix.
+                let file = entry.standardizedFileURL
                 guard try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true, file.lastPathComponent != ".DS_Store" else { continue }
+                guard file.path.hasPrefix(source.path + "/") else { throw DataIntegrityError.io("A copied file could not be matched to its source folder.") }
                 let relative = String(file.path.dropFirst(source.path.count + 1))
                 guard try StorageDigest.hash(file) == StorageDigest.hash(destination.appendingPathComponent(relative)) else {
                     throw DataIntegrityError.io("The copied data did not verify. The original location remains active.")
                 }
             }
+            if let enumerationError { throw enumerationError }
             try AtomicFile.synchronizeDirectory(destination)
         }.value
-        var updated = preferences
+        // Preserve appearance/resource changes made while the copy was running.
+        updated = preferences
         updated[keyPath: keyPath] = destination.path
         try savePreferences(updated)
         await load()

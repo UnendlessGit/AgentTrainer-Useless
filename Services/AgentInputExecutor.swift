@@ -12,6 +12,7 @@ final class AgentInputExecutor: @unchecked Sendable {
     private var reason: String?
     private var lastClick: (button: Int, time: TimeInterval, point: CGPoint, count: Int)?
     private var holds: [String: TimeInterval] = [:]
+    private var human = HumanInputSnapshot()
     private let capabilities: ActionCapabilities
     private let eventSource = CGEventSource(stateID: .privateState)
     private let doubleClickInterval: TimeInterval
@@ -29,6 +30,7 @@ final class AgentInputExecutor: @unchecked Sendable {
 
     var isStopped: Bool { lock.withLock { stopped } }
     var stopReason: String? { lock.withLock { reason } }
+    var humanInput: HumanInputSnapshot { lock.withLock { human } }
     var longestHold: TimeInterval { lock.withLock { holds.values.min().map { ProcessInfo.processInfo.systemUptime - $0 } ?? 0 } }
     var state: InputState {
         lock.withLock {
@@ -39,17 +41,35 @@ final class AgentInputExecutor: @unchecked Sendable {
     }
 
     func stop(_ reason: String) {
+        lock.withLock { stopLocked(reason) }
+    }
+
+    /// Called directly by the input tap, before its asynchronous journal queue.
+    /// Observed human events and policy emission share one lock. Even a complete
+    /// press/release during inference invalidates a decision made beforehand.
+    func observeHumanInput(_ state: InputState, stopOnInput: Bool) {
         lock.withLock {
-            guard !stopped else { return }
-            stopped = true; self.reason = reason
-            for key in owned.keys.sorted() { _ = send(.keyUp(code: key)) }
-            for button in owned.buttons.sorted() { _ = send(.buttonUp(button: button)) }
+            human.state = state; human.revision &+= 1
+            if stopOnInput { stopLocked("Stopped by keyboard or mouse input.") }
+            else if !owned.keys.isEmpty || !owned.buttons.isEmpty {
+                stopLocked("Human input conflicted with input held by the agent.")
+            }
         }
     }
 
-    func execute(_ action: ComputerAction, bounds: CaptureRect) throws {
+    private func stopLocked(_ reason: String) {
+        guard !stopped else { return }
+        stopped = true; self.reason = reason
+        for key in owned.keys.sorted() { _ = send(.keyUp(code: key)) }
+        for button in owned.buttons.sorted() { _ = send(.buttonUp(button: button)) }
+    }
+
+    /// False means a pending decision was superseded by human input. No event or
+    /// owned-state transition occurs; the caller must observe and decide again.
+    @discardableResult func execute(_ action: ComputerAction, bounds: CaptureRect, humanRevision: UInt64? = nil) throws -> Bool {
         try lock.withLock {
             guard !stopped else { throw CancellationError() }
+            guard !human.isHeld, humanRevision == nil || humanRevision == human.revision else { return false }
             guard !IsSecureEventInputEnabled() else { throw DataIntegrityError.io("Secure Input became active. The run stopped.") }
             if let cursor = CGEvent(source: nil)?.location { owned.cursorX = cursor.x; owned.cursorY = cursor.y }
             guard capabilities.permits(action, state: owned) else { throw DataIntegrityError.invalidData("The requested action violates the current input permissions or held state.") }
@@ -73,6 +93,7 @@ final class AgentInputExecutor: @unchecked Sendable {
             default: break
             }
             guard send(action) else { throw DataIntegrityError.io("macOS could not allocate an input event. The run stopped.") }
+            return true
         }
     }
 
@@ -142,4 +163,10 @@ final class AgentInputExecutor: @unchecked Sendable {
         for (key, aggregate, side) in mappings where keys.contains(key) { raw |= aggregate | side }
         return CGEventFlags(rawValue: raw)
     }
+}
+
+struct HumanInputSnapshot: Sendable {
+    var state = InputState()
+    var revision: UInt64 = 0
+    var isHeld: Bool { !state.keys.isEmpty || !state.buttons.isEmpty }
 }

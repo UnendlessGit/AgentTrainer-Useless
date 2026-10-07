@@ -22,7 +22,7 @@ final class TrainingCoordinator {
     }
 
     func saveSettings() {
-        store.perform { try settings.validate(); try AtomicFile.encode(settings, to: store.supportURL.appendingPathComponent("training-settings.json")) }
+        store.perform { try store.requireWritable(); try settings.validate(); try AtomicFile.encode(settings, to: store.supportURL.appendingPathComponent("training-settings.json")) }
     }
 
     func recordings(for model: AIModel, stage: TrainingStage) -> [RecordingItem] {
@@ -35,6 +35,7 @@ final class TrainingCoordinator {
 
     func start(model: AIModel, stage: TrainingStage, resume: Bool = false) {
         guard !isBusy else { return }
+        guard store.canAccessWorkspace else { return }
         guard !store.migrating, store.activeOperations.isEmpty else { store.error = "Finish the active operation before training."; return }
         saveSettings()
         store.activeOperations.insert("training")

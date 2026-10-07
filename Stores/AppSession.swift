@@ -19,10 +19,14 @@ final class AppSession {
     var recordingForm = RecordingForm()
     let shortcuts = GlobalShortcuts()
     private var shortcutsInstalled = false
+    private var unitTestHost = false
     init() {
         var supportURL: URL?
         #if DEBUG
-        if let path = ProcessInfo.processInfo.environment["AGENTTRAINER_VALIDATION_WORKSPACE"], path.hasPrefix("/") {
+        if ProcessInfo.processInfo.environment["AGENTTRAINER_UNIT_TESTING"] == "1" {
+            unitTestHost = true
+            supportURL = FileManager.default.temporaryDirectory.appendingPathComponent("AgentTrainerUnitTests-\(UUID().uuidString)", isDirectory: true)
+        } else if let path = ProcessInfo.processInfo.environment["AGENTTRAINER_VALIDATION_WORKSPACE"], path.hasPrefix("/") {
             supportURL = URL(fileURLWithPath: path, isDirectory: true)
         }
         #endif
@@ -39,11 +43,11 @@ final class AppSession {
     }
 
     func saveRecordingForm() {
-        store.perform { try AtomicFile.encode(recordingForm, to: store.supportURL.appendingPathComponent("recording-form.json")) }
+        store.perform { try store.requireWritable(); try AtomicFile.encode(recordingForm, to: store.supportURL.appendingPathComponent("recording-form.json")) }
     }
 
     func installShortcuts() {
-        guard !shortcutsInstalled else { return }
+        guard !unitTestHost, store.canAccessWorkspace, !shortcutsInstalled else { return }
         shortcuts.onAction = { [weak self] action in
             guard let self else { return }
             switch action {
@@ -61,6 +65,7 @@ final class AppSession {
     }
 
     func updateShortcuts(_ bindings: ShortcutBindings) throws {
+        try store.requireWritable()
         try shortcuts.install(bindings)
         var preferences = store.preferences; preferences.shortcuts = bindings
         do { try store.savePreferences(preferences) }

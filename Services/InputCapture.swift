@@ -15,13 +15,15 @@ final class InputCapture: @unchecked Sendable {
     private var controlGesture: ControlGestureTracker
     private let clock: SessionClock
     private let settings: RecordingSettings
+    private let onInput: @Sendable (InputState) -> Void
     private let onEvent: @Sendable (InputTransition) throws -> Void
     private let onFailure: @Sendable (String) -> Void
 
     init(clock: SessionClock, settings: RecordingSettings, shortcuts: ShortcutBindings = ShortcutBindings(),
+         onInput: @escaping @Sendable (InputState) -> Void = { _ in },
          onEvent: @escaping @Sendable (InputTransition) throws -> Void,
          onFailure: @escaping @Sendable (String) -> Void) {
-        self.clock = clock; self.settings = settings; self.onEvent = onEvent; self.onFailure = onFailure
+        self.clock = clock; self.settings = settings; self.onInput = onInput; self.onEvent = onEvent; self.onFailure = onFailure
         controlGesture = ControlGestureTracker(bindings: [shortcuts.recording, shortcuts.emergency])
     }
 
@@ -100,11 +102,13 @@ final class InputCapture: @unchecked Sendable {
         }
         guard let action else { return }
         let time = clock.relative(absolute: event.timestamp)
-        lock.withLock {
+        let updatedState = lock.withLock {
             controlGesture.observe(action: action, flags: event.flags.rawValue, time: time)
             state.apply(action)
             state.cursorX = event.location.x; state.cursorY = event.location.y
+            return state
         }
+        onInput(updatedState)
         let transition = InputTransition(id: 0, timeNanoseconds: time, action: action,
                                          isRepeat: type == .keyDown && event.getIntegerValueField(.keyboardEventAutorepeat) != 0,
                                          modifiers: event.flags.rawValue, cursorX: event.location.x, cursorY: event.location.y,

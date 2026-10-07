@@ -34,9 +34,9 @@ struct SettingsView: View {
                     if moving { ProgressView("Copying and verifying data…") }
                 }
                 Surface(title: "Appearance & resources", symbol: "slider.horizontal.3") {
-                    Picker("Appearance", selection: preference(\.appearance)) { ForEach(["System", "Light", "Dark"], id: \.self) { Text($0).tag($0) } }.frame(maxWidth: 380)
-                    Picker("MLX memory limit", selection: preference(\.memoryLimitGB)) { ForEach([4, 8, 12, 16, 24], id: \.self) { Text("\($0) GB").tag($0) } }.frame(maxWidth: 380)
-                    Picker("MLX cache limit", selection: preference(\.cacheLimitGB)) { ForEach([0, 1, 2, 4, 8], id: \.self) { Text("\($0) GB").tag($0) } }.frame(maxWidth: 380)
+                    Picker("Appearance", selection: preference(\.appearance)) { ForEach(AppPreferences.appearances, id: \.self) { Text($0).tag($0) } }.frame(maxWidth: 380)
+                    Picker("MLX memory limit", selection: preference(\.memoryLimitGB)) { ForEach(AppPreferences.memoryLimitsGB, id: \.self) { Text("\($0) GB").tag($0) } }.frame(maxWidth: 380)
+                    Picker("MLX cache limit", selection: preference(\.cacheLimitGB)) { ForEach(AppPreferences.cacheLimitsGB, id: \.self) { Text("\($0) GB").tag($0) } }.frame(maxWidth: 380)
                     Toggle("Stop runs on human input by default", isOn: preference(\.stopOnHumanInput))
                 }
                 Surface(title: "Cache & checkpoint storage", symbol: "internaldrive") {
