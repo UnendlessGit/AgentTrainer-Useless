@@ -47,6 +47,9 @@ struct CheckpointStore: Sendable {
               manifest.preprocessingVersion == 1, manifest.actionCodecVersion == PolicyActionCodec.version else {
             throw DataIntegrityError.invalidData("This checkpoint is incompatible with the current model configuration. Restore the original configuration or train a new model.")
         }
+        guard manifest.epoch >= 0, manifest.sampleCursor >= 0, manifest.step >= 0 else {
+            throw DataIntegrityError.invalidData("The checkpoint contains an invalid training position.")
+        }
         for name in ["weights.safetensors", "optimizer.safetensors"] {
             guard let expected = manifest.files[name], try digest(url.appendingPathComponent(name)) == expected else {
                 throw DataIntegrityError.invalidData("The checkpoint failed its integrity check (\(name)). Previous checkpoints remain preserved.")
@@ -74,7 +77,8 @@ struct CheckpointStore: Sendable {
         let pointer = try AtomicFile.decode(CheckpointPointer.self, from: pointerURL)
         let manifest = try AtomicFile.decode(CheckpointManifest.self, from: modelRoot.appendingPathComponent(pointer.checkpointID.uuidString).appendingPathComponent("manifest.json"))
         guard pointer.schemaVersion == 1, manifest.schemaVersion == 1, manifest.id == pointer.checkpointID,
-              manifest.modelID == modelID, manifest.stage == stage else { throw DataIntegrityError.invalidData("The checkpoint metadata is inconsistent.") }
+              manifest.modelID == modelID, manifest.stage == stage,
+              manifest.epoch >= 0, manifest.sampleCursor >= 0, manifest.step >= 0 else { throw DataIntegrityError.invalidData("The checkpoint metadata is inconsistent.") }
         return manifest
     }
 

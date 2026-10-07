@@ -76,6 +76,7 @@ final class WorkspaceStore {
                     where url.pathExtension == "json" {
                     do {
                         var model = try AtomicFile.decode(AIModel.self, from: url)
+                        guard model.schemaVersion == 1 else { throw DataIntegrityError.unsupportedVersion(model.schemaVersion) }
                         // A crash after committing a checkpoint pointer but before
                         // saving the small model file must not strand completed work.
                         var recovered = false
@@ -167,12 +168,7 @@ final class WorkspaceStore {
     func editRecording(_ item: RecordingItem, edits: RecordingEdits) throws {
         try requireWritable()
         if let name = edits.name { _ = try validatedName(name) }
-        guard edits.trimStart.isFinite && edits.trimStart >= 0,
-              (edits.trimEnd ?? item.manifest.duration).isFinite,
-              edits.trimEnd ?? item.manifest.duration <= item.manifest.duration,
-              (edits.trimEnd ?? item.manifest.duration) > edits.trimStart else {
-            throw DataIntegrityError.invalidData("The trim must stay within the recording and have a positive duration.")
-        }
+        _ = try edits.timeRange(duration: item.manifest.duration)
         try AtomicFile.encode(edits, to: item.url.appendingPathComponent("edits.json"))
         if let index = recordings.firstIndex(where: { $0.id == item.id }) { recordings[index].edits = edits }
     }
@@ -189,11 +185,30 @@ final class WorkspaceStore {
 
     func saveModel(_ model: AIModel) throws {
         try requireWritable()
+        guard model.schemaVersion == 1 else { throw DataIntegrityError.unsupportedVersion(model.schemaVersion) }
         try model.configuration.validate()
         var updated = model
         updated.name = try validatedName(model.name); updated.modifiedAt = Date()
         try AtomicFile.encode(updated, to: modelRoot.appendingPathComponent(model.id.uuidString + ".json"))
         if let index = models.firstIndex(where: { $0.id == updated.id }) { models[index] = updated } else { models.append(updated) }
+    }
+
+    /// Editor drafts own configuration fields, not asynchronously saved checkpoints.
+    /// Merge onto the current record so a stale editor cannot erase completed work.
+    func saveModelConfiguration(_ draft: AIModel) throws {
+        try requireWritable()
+        guard activeOperations.isEmpty else {
+            throw DataIntegrityError.invalidData("Finish the active operation before changing model configuration.")
+        }
+        guard var current = models.first(where: { $0.id == draft.id }) else {
+            throw DataIntegrityError.invalidData("This model no longer exists. Select an existing model or create a new one.")
+        }
+        current.name = draft.name
+        current.configuration = draft.configuration
+        current.imitationFolderIDs = draft.imitationFolderIDs
+        current.imitationRecordingIDs = draft.imitationRecordingIDs
+        current.pretrainingFolderIDs = draft.pretrainingFolderIDs
+        try saveModel(current)
     }
 
     func trashModel(_ model: AIModel) throws {

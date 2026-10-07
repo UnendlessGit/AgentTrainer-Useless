@@ -2,6 +2,21 @@ import XCTest
 @testable import AgentTrainer
 
 final class CaptureCatalogTests: XCTestCase {
+    @MainActor func testMalformedCaptureRatesAreRejectedBeforeNativeIntegerConversion() throws {
+        let catalog = CaptureCatalog()
+        for rate in [0, -1, Int.max] {
+            var settings = RecordingSettings(); settings.framesPerSecond = rate
+            XCTAssertThrowsError(try catalog.resolve(CaptureTarget(), settings: settings)) { error in
+                XCTAssertTrue(error.localizedDescription.contains("capture size"))
+            }
+        }
+        var settings = RecordingSettings(); settings.maximumDimension = Int.max
+        XCTAssertThrowsError(try settings.validate())
+        settings = RecordingSettings(); settings.quality = .nan
+        XCTAssertThrowsError(try settings.validate())
+        try RecordingSettings().validate()
+    }
+
     @MainActor func testConcurrentRefreshWaitsForTheInFlightResult() async {
         let catalog = CaptureCatalog()
         var release: CheckedContinuation<Void, Never>?

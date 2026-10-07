@@ -73,11 +73,16 @@ private struct ModelEditor: View {
     @State private var showKeys = false
     @State private var showRecordings = false
     init(store: WorkspaceStore, original: AIModel) { self.store = store; self.original = original; _draft = State(initialValue: original) }
+    private var checkpointCompatibility: String {
+        var current = store.models.first(where: { $0.id == original.id }) ?? original
+        current.configuration = draft.configuration
+        return current.compatibility
+    }
     var body: some View {
         Form {
             Section("Model") {
                 TextField("Name", text: $draft.name)
-                LabeledContent("Checkpoint", value: draft.compatibility)
+                LabeledContent("Checkpoint", value: checkpointCompatibility)
                 if draft.configuration.fingerprint != original.configuration.fingerprint {
                     Label("Architecture or capability changes require retraining.", systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.orange)
                 }
@@ -150,7 +155,7 @@ private struct ModelEditor: View {
                     }))
                 }
             }
-            Section { Button("Save model configuration") { store.perform { try store.saveModel(draft); store.notice = "Model configuration saved." } }.buttonStyle(.borderedProminent) }
-        }.formStyle(.grouped)
+            Section { Button("Save model configuration") { store.perform { try store.saveModelConfiguration(draft); store.notice = "Model configuration saved." } }.buttonStyle(.borderedProminent) }
+        }.formStyle(.grouped).disabled(!store.activeOperations.isEmpty || store.migrating)
     }
 }

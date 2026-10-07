@@ -76,6 +76,11 @@ final class CheckpointStoreTests: XCTestCase {
         let loaded = try XCTUnwrap(store.latest(modelID: metadata.modelID, stage: .imitation, configuration: config))
         XCTAssertEqual(loaded.0.id, saved.id)
         XCTAssertEqual(loaded.0.step, 10)
+        var invalidPosition = loaded.0; invalidPosition.epoch = -1
+        try AtomicFile.encode(invalidPosition, to: loaded.1.appendingPathComponent("manifest.json"))
+        XCTAssertThrowsError(try store.load(modelID: metadata.modelID, checkpointID: metadata.id, configuration: config))
+        XCTAssertThrowsError(try store.latestMetadata(modelID: metadata.modelID, stage: .imitation))
+        try AtomicFile.encode(loaded.0, to: loaded.1.appendingPathComponent("manifest.json"))
         try Data("corrupt".utf8).write(to: loaded.1.appendingPathComponent("weights.safetensors"))
         XCTAssertThrowsError(try store.load(modelID: metadata.modelID, checkpointID: metadata.id, configuration: config))
     }

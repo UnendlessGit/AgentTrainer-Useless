@@ -143,6 +143,7 @@ final class RunCoordinator {
         guard let application = NSRunningApplication(processIdentifier: pid) else { throw DataIntegrityError.invalidData("The target application closed.") }
         application.activate(options: [])
         let element = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(element, 0.5)
         var value: CFTypeRef?
         if AXUIElementCopyAttributeValue(element, kAXWindowsAttribute as CFString, &value) == .success, let windows = value as? [AXUIElement] {
             for window in windows {

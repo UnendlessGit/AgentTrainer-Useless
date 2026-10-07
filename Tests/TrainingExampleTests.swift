@@ -2,6 +2,29 @@ import XCTest
 @testable import AgentTrainer
 
 final class TrainingExampleTests: XCTestCase {
+    func testInvalidSavedTrimsAreIneligibleInsteadOfTrappingDuringConversion() throws {
+        var manifest = RecordingManifest(name: "Saved data", folderID: UUID(), kind: .imitation,
+            target: CaptureTarget(), settings: RecordingSettings())
+        manifest.status = .complete; manifest.observationCount = 2; manifest.durationNanoseconds = 1_000_000_000
+        var item = RecordingItem(manifest: manifest, edits: RecordingEdits(), url: URL(fileURLWithPath: "/unused"))
+        for bad in [-1.0, Double.infinity, Double.nan, Double.greatestFiniteMagnitude] {
+            item.edits.trimStart = bad
+            XCTAssertFalse(item.eligible)
+            XCTAssertThrowsError(try TrainingExampleBuilder.stream(item: item) { _ in XCTFail("No rows expected") })
+        }
+        item.edits.trimStart = 0
+        item.edits.trimEnd = 2
+        XCTAssertFalse(item.eligible)
+        item.edits.trimEnd = 1
+        XCTAssertTrue(item.eligible)
+        XCTAssertEqual(try item.edits.timeRange(duration: 1).end, 1_000_000_000)
+        item.edits.schemaVersion = 99
+        XCTAssertFalse(item.eligible)
+        XCTAssertThrowsError(try item.edits.timeRange(duration: 1))
+        var large = RecordingEdits(); large.trimEnd = 1e30
+        XCTAssertThrowsError(try large.timeRange(duration: 1e30))
+    }
+
     func testRecordedRepeatsRemainTimedTargetsWithoutChangingHeldState() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

@@ -37,6 +37,13 @@ struct RecordingSettings: Codable, Equatable, Sendable {
     var pointerMovement = true
     var scrolling = true
     var relativeMovement = false
+
+    func validate() throws {
+        guard (64...7680).contains(maximumDimension), (1...60).contains(framesPerSecond),
+              quality.isFinite, (0.05...1).contains(quality) else {
+            throw DataIntegrityError.invalidData("Use a capture size from 64 to 7680, a rate from 1 to 60 observations/s, and a quality from 5% to 100%.")
+        }
+    }
 }
 
 enum LibraryKind: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -108,6 +115,18 @@ struct RecordingEdits: Codable, Equatable, Sendable {
     var excluded = false
     var automaticTrimReason: String?
     var reviewedRecovery: Bool?
+
+    func timeRange(duration: Double) throws -> (start: UInt64, end: UInt64) {
+        guard schemaVersion == 1 else { throw DataIntegrityError.unsupportedVersion(schemaVersion) }
+        let end = trimEnd ?? duration
+        guard duration.isFinite, trimStart.isFinite, end.isFinite, trimStart >= 0, end <= duration,
+              end > trimStart,
+              let startTime = UInt64(exactly: (trimStart * 1e9).rounded(.towardZero)),
+              let endTime = UInt64(exactly: (end * 1e9).rounded(.towardZero)), startTime < endTime else {
+            throw DataIntegrityError.invalidData("The trim must stay within the recording and have a positive, representable duration.")
+        }
+        return (startTime, endTime)
+    }
 }
 
 struct RecordingItem: Identifiable, Sendable {
@@ -123,9 +142,14 @@ struct RecordingItem: Identifiable, Sendable {
         let approved = manifest.status == .complete && manifest.failure == nil
             || needsRecoveryReview && edits.reviewedRecovery == true
         return !edits.excluded && approved && manifest.observationCount >= 2 && duration > 0
+            && (try? edits.timeRange(duration: manifest.duration)) != nil
     }
     var eligibility: String {
         if edits.excluded { return "Excluded" }
+        if manifest.status != .recording && manifest.durationNanoseconds > 0
+            && (try? edits.timeRange(duration: manifest.duration)) == nil {
+            return "Invalid trim or unsupported edits · review required"
+        }
         if eligible && needsRecoveryReview { return "Reviewed recovery" }
         return manifest.eligibility
     }

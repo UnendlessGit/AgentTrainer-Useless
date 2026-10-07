@@ -31,8 +31,8 @@ enum TrainingExampleBuilder {
         var previousAction: ComputerAction = .wait(seconds: 0)
         var previousActionTime: UInt64 = 0
         var lastEventTime: UInt64 = 0
-        let trimStart = UInt64(item.edits.trimStart * 1e9)
-        let trimEnd = UInt64((item.edits.trimEnd ?? item.manifest.duration) * 1e9)
+        let trim = try item.edits.timeRange(duration: item.manifest.duration)
+        let trimStart = trim.start, trimEnd = trim.end
 
         func consume(_ input: InputTransition) throws {
             guard input.timeNanoseconds >= lastEventTime else { throw DataIntegrityError.invalidTimeline }

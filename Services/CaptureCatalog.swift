@@ -61,6 +61,7 @@ final class CaptureCatalog {
     }
 
     func resolve(_ target: CaptureTarget, settings: RecordingSettings) throws -> (CaptureTarget, [CapturePart]) {
+        try settings.validate()
         var parts: [(UInt32, SCContentFilter, CGRect, CGRect?)] = []
         switch (target.kind, target.windowID) {
         case (.desktop, _):
