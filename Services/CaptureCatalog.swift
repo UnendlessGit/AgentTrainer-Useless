@@ -20,6 +20,8 @@ struct CapturePart: @unchecked Sendable {
     let globalBounds: CGRect
     let tracksWindowGeometry: Bool
     let crop: CGRect?
+    let sourceDisplayBounds: CGRect?
+    let includesEntireDesktop: Bool
 }
 
 @MainActor @Observable
@@ -27,14 +29,24 @@ final class CaptureCatalog {
     private(set) var displays: [DisplayChoice] = []
     private(set) var windows: [WindowChoice] = []
     private(set) var loading = false
+    private var refreshWaiters: [CheckedContinuation<Void, Never>] = []
     var error: String?
 
-    func refresh() async {
-        guard !loading else { return }
+    func refresh(fetch: () async throws -> SCShareableContent = {
+        try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+    }) async {
+        if loading {
+            await withCheckedContinuation { refreshWaiters.append($0) }
+            return
+        }
         loading = true
-        defer { loading = false }
+        defer {
+            loading = false
+            let waiters = refreshWaiters; refreshWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
         do {
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            let content = try await fetch()
             displays = content.displays.enumerated().map { offset, display in
                 let name = NSScreen.screens.first(where: { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32) == display.displayID })?.localizedName
                 return DisplayChoice(display: display, title: "\(name ?? "Display \(offset + 1)") · \(display.width) × \(display.height)")
@@ -101,8 +113,11 @@ final class CaptureCatalog {
             config.scalesToFit = true
             config.preservesAspectRatio = false
             if let crop { config.sourceRect = crop }
+            let tracksWindow = target.kind == .window || (target.kind == .region && target.windowID != nil)
             return CapturePart(id: id, filter: filter, configuration: config, globalBounds: bounds,
-                               tracksWindowGeometry: target.kind == .window || (target.kind == .region && target.windowID != nil), crop: crop)
+                               tracksWindowGeometry: tracksWindow, crop: crop,
+                               sourceDisplayBounds: tracksWindow ? nil : displays.first(where: { $0.id == id })?.display.frame,
+                               includesEntireDesktop: target.kind == .desktop)
         }
         return (resolved, result)
     }

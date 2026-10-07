@@ -29,6 +29,7 @@ final class CaptureFrameSource: NSObject, SCStreamOutput, SCStreamDelegate, @unc
     private var consumed: [UInt32: UInt64] = [:]
     private var generation: UInt64 = 0
     private var active = true
+    private var displayLayout: DisplayLayoutConstraint?
     private let clock: SessionClock
     private let maximumDimension: Int
     private let onFailure: @Sendable (String) -> Void
@@ -47,6 +48,13 @@ final class CaptureFrameSource: NSObject, SCStreamOutput, SCStreamDelegate, @unc
     }
 
     @MainActor func start(parts: [CapturePart]) async throws {
+        let displays = Dictionary(uniqueKeysWithValues: parts.compactMap { part in
+            part.sourceDisplayBounds.map { (part.id, $0) }
+        })
+        lock.withLock {
+            displayLayout = displays.isEmpty ? nil : DisplayLayoutConstraint(expected: displays,
+                includesEntireDesktop: parts.contains(where: \.includesEntireDesktop))
+        }
         do {
             for part in parts {
                 guard lock.withLock({ active }) else { throw CancellationError() }
@@ -68,11 +76,14 @@ final class CaptureFrameSource: NSObject, SCStreamOutput, SCStreamDelegate, @unc
     }
 
     func latestScene() throws -> CapturedScene? {
-        let snapshot = lock.withLock { () -> (Bool, [UInt32: Frame], Int) in
+        let snapshot = lock.withLock { () -> (Bool, [UInt32: Frame], Int, DisplayLayoutConstraint?) in
             if frames.count == parts.count { consumed = frames.mapValues(\.generation) }
-            return (active, frames, parts.count)
+            return (active, frames, parts.count, displayLayout)
         }
         guard snapshot.0 else { throw CancellationError() }
+        // Check before returning even a cached/static scene. No fresh capture
+        // callback is required to notice a display topology change.
+        if let layout = snapshot.3 { try layout.validate(current: DisplayLayoutConstraint.current()) }
         guard !snapshot.1.isEmpty, snapshot.1.count == snapshot.2 else {
             if clock.now > 10_000_000_000 { throw DataIntegrityError.io("The target did not provide a complete frame within 10 seconds.") }
             return nil

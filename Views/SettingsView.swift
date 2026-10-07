@@ -63,7 +63,7 @@ struct SettingsView: View {
                             HStack {
                                 Text(action.title).frame(width: 170, alignment: .leading)
                                 Picker("Key", selection: $shortcuts[action].keyCode) {
-                                    ForEach(KeyNames.names.keys.sorted(), id: \.self) { Text(KeyNames.name($0)).tag(UInt32($0)) }
+                                    ForEach(ShortcutBinding.supportedKeyCodes, id: \.self) { Text(KeyNames.name(UInt16($0))).tag($0) }
                                 }.frame(width: 150)
                                 Text(shortcuts[action].label).foregroundStyle(.secondary)
                             }
