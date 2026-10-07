@@ -36,7 +36,9 @@ struct PolicyConfiguration: Codable, Equatable, Sendable {
         let visualActivations = batchSize * sequenceLength * visualDepth * (detailCrop ? 2 : 1)
             * (4 * patches * patches * 4 + patches * visualWidth * 64)
         let parameters = visualDepth * visualWidth * visualWidth * 12 + memoryDepth * memorySize * memorySize * 12
-        return visualActivations + parameters * 24 + 128 * 1_048_576
+        let temporalActivations = memory == .attention ? batchSize * sequenceLength * memoryDepth
+            * (4 * sequenceLength * sequenceLength * 24 + sequenceLength * memorySize * 64) : 0
+        return visualActivations + temporalActivations + parameters * 24 + 128 * 1_048_576
     }
 
     var fingerprint: String {
@@ -49,7 +51,10 @@ struct PolicyConfiguration: Codable, Equatable, Sendable {
                       String(capabilities.pointer), String(capabilities.relativePointer), String(capabilities.scrolling),
                       String(capabilities.dragging), String(capabilities.chords), String(capabilities.maximumHeldKeys)]
         let repeatExtension = capabilities.repeatsKeys ? "|explicit-key-repeat-v1" : ""
-        return SHA256.hash(data: Data((stable.joined(separator: "|") + repeatExtension).utf8)).map { String(format: "%02x", $0) }.joined()
+        // Earlier attention weights were trained with resets at chunk boundaries.
+        // Keep recurrent compatibility, but require retraining those attention models.
+        let memoryExtension = memory == .attention ? "|sliding-attention-carry-v1" : ""
+        return SHA256.hash(data: Data((stable.joined(separator: "|") + repeatExtension + memoryExtension).utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }
 

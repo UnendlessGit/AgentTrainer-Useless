@@ -115,9 +115,9 @@ struct RunView: View {
                                 Button("Allow model's keys") { runner.configuration.permissions.keys = model?.configuration.capabilities.keys ?? [] }
                                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 105))]) {
                                     ForEach((model?.configuration.capabilities.keys ?? []).sorted(), id: \.self) { key in
-                                        Toggle(KeyNames.name(key), isOn: Binding(get: { runner.configuration.permissions.keys.contains(key) }, set: {
+                                        KeyPermissionToggle(key: key, isOn: Binding(get: { runner.configuration.permissions.keys.contains(key) }, set: {
                                             if $0 { runner.configuration.permissions.keys.insert(key) } else { runner.configuration.permissions.keys.remove(key) }
-                                        })).toggleStyle(.checkbox)
+                                        }))
                                     }
                                 }
                             }

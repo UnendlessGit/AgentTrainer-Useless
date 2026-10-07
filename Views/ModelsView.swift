@@ -118,9 +118,9 @@ private struct ModelEditor: View {
                     }
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 105))], alignment: .leading, spacing: 8) {
                         ForEach(KeyNames.names.keys.sorted(), id: \.self) { code in
-                            Toggle(KeyNames.name(code), isOn: Binding(get: { draft.configuration.capabilities.keys.contains(code) }, set: {
+                            KeyPermissionToggle(key: code, isOn: Binding(get: { draft.configuration.capabilities.keys.contains(code) }, set: {
                                 if $0 { draft.configuration.capabilities.keys.insert(code) } else { draft.configuration.capabilities.keys.remove(code) }
-                            })).toggleStyle(.checkbox)
+                            }))
                         }
                     }.padding(.vertical, 10)
                 }

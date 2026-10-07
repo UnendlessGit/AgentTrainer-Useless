@@ -56,6 +56,30 @@ final class PolicyNetworkTests: XCTestCase {
         XCTAssertLessThan(max(abs(outputA.actionLogits[0..., 0..<2] - outputB.actionLogits[0..., 0..<2])).item(Float.self), 1e-4)
     }
 
+    func testAttentionCarryMatchesSlidingWindowsAcrossChunksAndDropsOldContext() {
+        var c = configuration(.attention); c.memoryDepth = 2
+        let model = PolicyNetwork(configuration: c)
+        let images = MLXRandom.uniform(0..<1, [1, 9, 128, 128, 3])
+        var expected: [MLXArray] = []
+        for end in 1...9 {
+            let window = forward(model, images: images[0..., max(0, end - c.sequenceLength)..<end])
+            expected.append(window.actionLogits[0..., (window.actionLogits.dim(1) - 1)..., 0...])
+        }
+        let reference = concatenated(expected, axis: 1)
+        var carry: [MLXArray] = [], actual: [MLXArray] = []
+        for start in stride(from: 0, to: 9, by: 3) {
+            let chunk = forward(model, images: images[0..., start..<(start + 3)], hidden: carry)
+            carry = chunk.hidden.map { stopGradient($0) }; actual.append(chunk.actionLogits)
+            XCTAssertEqual(carry.count, 1)
+            XCTAssertEqual(carry[0].shape, [1, c.sequenceLength - 1, c.memorySize])
+        }
+        XCTAssertLessThan(max(abs(concatenated(actual, axis: 1) - reference)).item(Float.self), 1e-4)
+        let changedPrefix = concatenated([MLXArray.ones([1, 5, 128, 128, 3]), images[0..., 5..., 0..., 0..., 0...]], axis: 1)
+        let changed = forward(model, images: changedPrefix)
+        let original = forward(model, images: images)
+        XCTAssertLessThan(max(abs(changed.actionLogits[0, 8] - original.actionLogits[0, 8])).item(Float.self), 1e-4)
+    }
+
     func testDynamicsPretrainingHasVisionGradientsWithoutImitationHeadGradients() {
         let model = PolicyNetwork(configuration: configuration(.recurrent))
         let images = MLXRandom.uniform(0..<1, [1, 2, 128, 128, 3])

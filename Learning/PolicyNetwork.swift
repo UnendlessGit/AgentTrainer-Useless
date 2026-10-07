@@ -145,9 +145,9 @@ final class PolicyNetwork: Module {
                 nextHidden.append(temporal[0..., length - 1, 0...])
             }
         } else {
-            temporal = temporal + temporalPosition[0..., 0..<length, 0...]
-            let mask = MultiHeadAttention.createAdditiveCausalMask(length)
-            for block in temporalAttention { temporal = block(temporal, mask: mask) }
+            let result = boundedAttention(temporal, previous: hidden.first)
+            temporal = result.output
+            nextHidden = [result.history]
         }
         temporal = temporalNorm(temporal)
         let flat = temporal.reshaped([n, c.memorySize])
@@ -164,5 +164,36 @@ final class PolicyNetwork: Module {
             continuousArguments: tanh(argumentHead(temporal)).reshaped([batch, length, vocabularySize, 2]),
             delayLogits: delayHead(temporal).reshaped([batch, length, vocabularySize, Self.delayBins.count]),
             futurePixels: future.reshaped([batch, length, patches, 3]), visualTokens: tokens, hidden: nextHidden, temporalFeatures: temporal)
+    }
+
+    /// Every supervised step sees exactly the trailing window used by Run.
+    /// Vision/fusion is evaluated once per new observation; overlapping temporal
+    /// windows are batched, with a bounded fused-feature carry across chunks.
+    private func boundedAttention(_ current: MLXArray, previous: MLXArray?) -> (output: MLXArray, history: MLXArray) {
+        let batch = current.dim(0), length = current.dim(1), width = configuration.memorySize
+        let window = configuration.sequenceLength
+        let past = previous ?? MLXArray.zeros([batch, 0, width])
+        let joined = concatenated([past, current], axis: 1)
+        let padded = concatenated([MLXArray.zeros([batch, window - 1, width]), joined], axis: 1)
+        let windows = (0..<length).map { index in
+            padded[0..., (past.dim(1) + index)..<(past.dim(1) + index + window), 0...]
+        }
+        var positions: [Int32] = [], paddingMask: [Float] = []
+        for index in 0..<length {
+            let padding = max(0, window - (past.dim(1) + index + 1))
+            for column in 0..<window {
+                positions.append(Int32(max(0, column - padding)))
+                paddingMask.append(column < padding ? -1e9 : 0)
+            }
+        }
+        let position = take(temporalPosition[0], MLXArray(positions, [length, window]), axis: 0)
+        var values = (stacked(windows, axis: 1) + position).reshaped([batch * length, window, width])
+        let mask = broadcast(MultiHeadAttention.createAdditiveCausalMask(window)
+            + MLXArray(paddingMask, [1, length, 1, 1, window]), to: [batch, length, 1, window, window])
+            .reshaped([batch * length, 1, window, window])
+        for block in temporalAttention { values = block(values, mask: mask) }
+        let retained = min(window - 1, joined.dim(1))
+        return (values[0..., window - 1, 0...].reshaped([batch, length, width]),
+                joined[0..., (joined.dim(1) - retained)..<joined.dim(1), 0...])
     }
 }

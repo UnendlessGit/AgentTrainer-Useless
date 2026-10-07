@@ -115,9 +115,10 @@ enum TrainingWorker {
                 try restoreWeights(model, from: directory)
                 let state = try MLX.loadArrays(url: directory.appendingPathComponent("optimizer.safetensors"))
                 try optimizer.restore(state, model: model)
-                if model.configuration.memory == .recurrent && saved.sampleCursor > 0 {
-                    hidden = try (0..<model.configuration.memoryDepth).map { index in
-                        guard let value = state["carry.\(index)"] else { throw DataIntegrityError.invalidData("This checkpoint is missing recurrent state.") }
+                if saved.sampleCursor > 0 {
+                    let count = model.configuration.memory == .recurrent ? model.configuration.memoryDepth : 1
+                    hidden = try (0..<count).map { index in
+                        guard let value = state["carry.\(index)"] else { throw DataIntegrityError.invalidData("This checkpoint is missing temporal state.") }
                         return value
                     }
                 }
@@ -144,10 +145,13 @@ enum TrainingWorker {
             guard (0...schedule.count).contains(cursor), epoch >= 0, optimizer.step == step else {
                 throw DataIntegrityError.invalidData("The checkpoint cursor or optimizer step is inconsistent.")
             }
-            if let plan = schedule.plan(at: cursor), !plan.resetsMemory, model.configuration.memory == .recurrent {
-                guard hidden.count == model.configuration.memoryDepth,
-                      hidden.allSatisfy({ $0.shape == [plan.recordings.count, model.configuration.memorySize] }) else {
-                    throw DataIntegrityError.invalidData("The checkpoint's recurrent state has incompatible dimensions.")
+            if let plan = schedule.plan(at: cursor), !plan.resetsMemory {
+                let c = model.configuration
+                let count = c.memory == .recurrent ? c.memoryDepth : 1
+                let shape = c.memory == .recurrent ? [plan.recordings.count, c.memorySize]
+                    : [plan.recordings.count, c.sequenceLength - 1, c.memorySize]
+                guard hidden.count == count, hidden.allSatisfy({ $0.shape == shape }) else {
+                    throw DataIntegrityError.invalidData("The checkpoint's temporal state has incompatible dimensions.")
                 }
             }
             var sampleTime = Date(), sampleCPU = processCPUSeconds(), completedThisRun = 0

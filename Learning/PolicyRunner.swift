@@ -26,11 +26,10 @@ struct RunProgress: Sendable {
 }
 
 /// Uses the same preprocessing, codec, grammar and recurrent carry as training.
-/// Bounded attention caches frozen visual features, avoiding repeated image encoding.
+/// Bounded attention caches fused features, avoiding repeated image encoding.
 final class PolicyRunner {
     struct MemoryState {
         var hidden: [MLXArray] = []
-        var history: [[MLXArray]] = []
     }
     private let model: PolicyNetwork
     private let codec: PolicyActionCodec
@@ -48,7 +47,6 @@ final class PolicyRunner {
     func decide(scene: CapturedScene, state: InputState, previousAction: ComputerAction, elapsed: Double,
                 sourceAge: Double, deterministic: Bool, temperature: Float, commitMemory: Bool = true) throws -> PolicyDecision {
         pendingMemory = nil
-        var history = memory.history
         let start = ProcessInfo.processInfo.systemUptime, c = model.configuration
         let image = try ObservationPreprocessor.pixels(scene.image, size: c.imageSize).reshaped([1, 1, c.imageSize, c.imageSize, 3])
         let crop = c.detailCrop ? try ObservationPreprocessor.detailCrop(scene.image, state: state, bounds: scene.bounds, size: c.imageSize)
@@ -56,28 +54,10 @@ final class PolicyRunner {
         let context = MLXArray(ObservationPreprocessor.context(state: state, bounds: scene.bounds, previousAction: previousAction,
             elapsed: elapsed, sourceAge: sourceAge), [1, 1, PolicyNetwork.contextSize])
         let previous = MLXArray(Int32(codec.token(for: previousAction) ?? codec.count)).reshaped([1, 1])
-        var images = image, crops = crop, contexts = context, previousActions = previous
-        var encodedVision: MLXArray?, encodedDetail: MLXArray?
-        if c.memory == .attention {
-            let visual = model.vision(image.reshaped([1, c.imageSize, c.imageSize, 3]))
-            let detail = c.detailCrop ? mean(model.vision(crop.reshaped([1, c.imageSize, c.imageSize, 3])), axis: 1) : MLXArray.zeros([1, c.visualWidth])
-            eval(visual, detail)
-            history.append([context, previous, visual, detail])
-            if history.count > c.sequenceLength { history.removeFirst() }
-            // Shape-only placeholders remain lazy: encoded visual features are
-            // supplied below, so the network never evaluates these image tensors.
-            images = MLXArray.zeros([1, history.count, c.imageSize, c.imageSize, 3]); crops = images
-            contexts = concatenated(history.map { $0[0] }, axis: 1)
-            previousActions = concatenated(history.map { $0[1] }, axis: 1)
-            encodedVision = concatenated(history.map { $0[2] }, axis: 0)
-            encodedDetail = concatenated(history.map { $0[3] }, axis: 0)
-        }
-        let length = images.dim(1)
-        let output = model(images: images, crops: c.detailCrop ? crops : nil, context: contexts, previousActions: previousActions,
-            instructions: broadcast(instruction, to: [1, length, PolicyNetwork.instructionLength]),
-            dynamicsActions: MLXArray.zeros([1, length], type: Int32.self), dynamicsArguments: MLXArray.zeros([1, length, 2]),
-            hidden: memory.hidden, encodedVision: encodedVision, encodedDetail: encodedDetail)
-        let last = length - 1
+        let output = model(images: image, crops: c.detailCrop ? crop : nil, context: context, previousActions: previous,
+            instructions: instruction, dynamicsActions: MLXArray.zeros([1, 1], type: Int32.self),
+            dynamicsArguments: MLXArray.zeros([1, 1, 2]), hidden: memory.hidden)
+        let last = 0
         let logits = output.actionLogits[0, last] + MLXArray(codec.mask(state: state, capabilities: permissions))
         func choose(_ logits: MLXArray) -> MLXArray {
             deterministic ? argMax(logits, axis: -1) : MLXRandom.categorical(logits / max(0.05, temperature))
@@ -111,7 +91,7 @@ final class PolicyRunner {
         if case .pointer = codec.actions[id] { isPointer = true } else { isPointer = false }
         let action = try codec.decode(token: id, x: Double(values[isPointer ? 1 : 3]), y: Double(values[isPointer ? 2 : 4]),
             delay: PolicyNetwork.delayBins[delayIndex], bounds: scene.bounds)
-        pendingMemory = MemoryState(hidden: hidden, history: history)
+        pendingMemory = MemoryState(hidden: hidden)
         if commitMemory { commitDecision() }
         return PolicyDecision(action: action, delay: PolicyNetwork.delayBins[delayIndex],
             inferenceSeconds: ProcessInfo.processInfo.systemUptime - start, observationBounds: scene.bounds)

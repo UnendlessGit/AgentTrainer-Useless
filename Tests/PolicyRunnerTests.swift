@@ -27,7 +27,6 @@ final class PolicyRunnerTests: XCTestCase {
                 _ = try runner.decide(scene: scene, state: state, previousAction: previous,
                     elapsed: 0.1, sourceAge: 0.1, deterministic: true, temperature: 1, commitMemory: false)
                 runner.discardDecision()
-                XCTAssertEqual(runner.memory.history.count, reference.memory.history.count)
                 XCTAssertEqual(runner.memory.hidden.count, reference.memory.hidden.count)
                 for (actual, expected) in zip(runner.memory.hidden, reference.memory.hidden) {
                     XCTAssertEqual(max(abs(actual - expected)).item(Float.self), 0)
