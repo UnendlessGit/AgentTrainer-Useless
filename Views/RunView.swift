@@ -42,6 +42,9 @@ struct RunView: View {
                                 Metric(title: "INFERENCE", value: String(format: "%.1f ms", runner.progress.inferenceMilliseconds))
                             }
                             Text(runner.message).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            if runner.progress.waitingForHuman && runner.isBusy {
+                                Text("Waiting for you to release keyboard and mouse buttons.").font(.callout).foregroundStyle(.orange)
+                            }
                             Text("Emergency stop: \((session.store.preferences.shortcuts ?? ShortcutBindings()).emergency.label)")
                                 .font(.callout.weight(.medium))
                         }
@@ -61,7 +64,7 @@ struct RunView: View {
                             }
                             TextField("Task instruction", text: $runner.configuration.instruction, axis: .vertical).lineLimit(2...4)
                             Toggle("Use best validation checkpoint", isOn: $runner.configuration.useBestCheckpoint)
-                            Text("Uses the latest checkpoint if no best checkpoint exists.").font(.caption).foregroundStyle(.secondary)
+                            Text("Uses the latest checkpoint if no best checkpoint matches this configuration and dataset.").font(.caption).foregroundStyle(.secondary)
                             Toggle("Choose the most likely action", isOn: $runner.configuration.deterministic)
                             if !runner.configuration.deterministic {
                                 Slider(value: $runner.configuration.temperature, in: 0.05...2) { Text("Sampling temperature") }
@@ -71,7 +74,7 @@ struct RunView: View {
                         Surface(title: "Control limits", symbol: "hand.raised") {
                             Toggle("Stop on human input", isOn: $runner.configuration.stopOnHumanInput)
                             if !runner.configuration.stopOnHumanInput {
-                                Text("Conflicting input still stops the run while the agent holds a key or button.").font(.caption).foregroundStyle(.secondary)
+                                Text("The agent waits while you hold input. Conflicting input stops the run while the agent holds a key or button.").font(.caption).foregroundStyle(.secondary)
                             }
                             Picker("Run duration", selection: $runner.configuration.maximumRunSeconds) {
                                 ForEach([15, 30, 60, 120, 300, 600], id: \.self) { Text("\($0) seconds").tag($0) }
@@ -110,6 +113,7 @@ struct RunView: View {
             if runner.catalog.displays.isEmpty { await refresh() }
         }
         .onChange(of: runner.configuration.modelID) { _, _ in if let model { runner.configuration.permissions = model.configuration.capabilities } }
+        .onDisappear { runner.saveConfiguration() }
     }
 
     private var sourcePicker: some View {

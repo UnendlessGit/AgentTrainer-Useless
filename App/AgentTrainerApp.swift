@@ -42,14 +42,15 @@ struct AgentTrainerApp: App {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let session else { return .terminateNow }
         session.saveRecordingForm()
-        guard session.recorder.isBusy || session.trainer.isBusy || session.runner.isBusy || session.store.migrating else { session.shortcuts.stop(); return .terminateNow }
+        session.trainer.saveSettings(); session.runner.saveConfiguration()
+        guard !session.store.activeOperations.isEmpty || session.store.migrating else { session.shortcuts.stop(); return .terminateNow }
         guard !terminating else { return .terminateLater }
         terminating = true
         session.trainer.pause()
         session.runner.stop("Application is quitting.")
         Task { @MainActor in
             await session.recorder.stop()
-            while session.trainer.isBusy || session.runner.isBusy || session.store.migrating { try? await Task.sleep(for: .milliseconds(100)) }
+            while !session.store.activeOperations.isEmpty || session.store.migrating { try? await Task.sleep(for: .milliseconds(100)) }
             session.shortcuts.stop()
             sender.reply(toApplicationShouldTerminate: true)
         }

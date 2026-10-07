@@ -26,6 +26,7 @@
 		4A69DC15DE649F4BAA493784 /* RecordView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C31DE9F561334A1F0187FEE /* RecordView.swift */; };
 		5287AD61494A5FBE1AFA572A /* InputCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D19C0F52DD0D08932E3758F /* InputCapture.swift */; };
 		54773ED8DA91427A3712F9A6 /* ResumableAdamW.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD779EB54428C6073CEF6A8C /* ResumableAdamW.swift */; };
+		5852E6741D3BADF80A9D9653 /* CheckpointMaintenance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58BAAAFDD3996C820C0044CA /* CheckpointMaintenance.swift */; };
 		5A07A54E48EFED880EF761D9 /* RecordingJournal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60909A6B7D4515BE23622454 /* RecordingJournal.swift */; };
 		5BF37EA108442F91F1600EAE /* TrainingExampleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD048CE370F2DA09D56280E2 /* TrainingExampleTests.swift */; };
 		5F0F23EE65E541C5D0252BA7 /* MLXOptimizers in Frameworks */ = {isa = PBXBuildFile; productRef = EE71FB7C22B54F9721B3D1D5 /* MLXOptimizers */; };
@@ -121,6 +122,7 @@
 		4206A3D69BD2CD5C5037709A /* PolicyActionCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PolicyActionCodec.swift; sourceTree = "<group>"; };
 		435180A4847802B75634C6A5 /* ModelsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsView.swift; sourceTree = "<group>"; };
 		4F81E47CC59C61F2208D0553 /* JSONLines.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONLines.swift; sourceTree = "<group>"; };
+		58BAAAFDD3996C820C0044CA /* CheckpointMaintenance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CheckpointMaintenance.swift; sourceTree = "<group>"; };
 		60909A6B7D4515BE23622454 /* RecordingJournal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingJournal.swift; sourceTree = "<group>"; };
 		62173ABC831298B6B190CCC7 /* ModifierState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModifierState.swift; sourceTree = "<group>"; };
 		698860EDB29B625FEF729A55 /* CausalAlignment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CausalAlignment.swift; sourceTree = "<group>"; };
@@ -273,6 +275,7 @@
 				0C0F5A57309AC52F6DEBD83F /* Action.swift */,
 				FFFEBCF37050F2D181CC72F0 /* AtomicFile.swift */,
 				698860EDB29B625FEF729A55 /* CausalAlignment.swift */,
+				58BAAAFDD3996C820C0044CA /* CheckpointMaintenance.swift */,
 				10A57EAFA60A0F9798AF8A65 /* CheckpointStore.swift */,
 				10F030EB56F383365B43DFD3 /* ControlGestureTracker.swift */,
 				15B0AEB60BE01522B392D001 /* JSONLineCursor.swift */,
@@ -467,6 +470,7 @@
 				2659658D05AC4942BA6DAC91 /* CaptureCatalog.swift in Sources */,
 				D945F102E34D445881E10056 /* CaptureFrameSource.swift in Sources */,
 				BD4BC4840DA04985F0781197 /* CausalAlignment.swift in Sources */,
+				5852E6741D3BADF80A9D9653 /* CheckpointMaintenance.swift in Sources */,
 				B428F62D8EE7D0552E875DD8 /* CheckpointStore.swift in Sources */,
 				6A0513436F41A4D2140006EB /* Components.swift in Sources */,
 				AF58D12CA207349104852234 /* ContentView.swift in Sources */,

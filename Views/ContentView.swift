@@ -35,7 +35,7 @@ struct ContentView: View {
                 switch session.tab {
                 case .record: RecordView(session: session)
                 case .library: LibraryView(store: session.store)
-                case .models: ModelsView(store: session.store).disabled(session.trainer.isBusy || session.store.migrating)
+                case .models: ModelsView(store: session.store).disabled(!session.store.activeOperations.isEmpty || session.store.migrating)
                 case .train: TrainView(session: session)
                 case .run: RunView(session: session)
                 case .settings: SettingsView(session: session)

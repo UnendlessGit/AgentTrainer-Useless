@@ -78,6 +78,29 @@ struct CheckpointStore: Sendable {
         return manifest
     }
 
+    func inference(modelID: UUID, latestID: UUID, configuration: PolicyConfiguration, preferBest: Bool) throws -> (CheckpointManifest, URL) {
+        let modelRoot = root.appendingPathComponent(modelID.uuidString)
+        var selected = latestID
+        let bestURL = modelRoot.appendingPathComponent("best-imitation.json")
+        if preferBest && FileManager.default.fileExists(atPath: bestURL.path) {
+            let pointer = try AtomicFile.decode(CheckpointPointer.self, from: bestURL)
+            guard pointer.schemaVersion == 1 else { throw DataIntegrityError.unsupportedVersion(pointer.schemaVersion) }
+            let best = try AtomicFile.decode(CheckpointManifest.self, from: modelRoot.appendingPathComponent(pointer.checkpointID.uuidString).appendingPathComponent("manifest.json"))
+            let latest = try AtomicFile.decode(CheckpointManifest.self, from: modelRoot.appendingPathComponent(latestID.uuidString).appendingPathComponent("manifest.json"))
+            guard best.modelID == modelID, best.id == pointer.checkpointID, best.stage == .imitation else {
+                throw DataIntegrityError.invalidData("The best checkpoint pointer is inconsistent.")
+            }
+            // A prior run's best pointer may remain after configuration/data changes
+            // or a new run without validation. It must not override current weights.
+            if best.configurationFingerprint == configuration.fingerprint && best.datasetFingerprint == latest.datasetFingerprint {
+                selected = best.id
+            }
+        }
+        let result = try load(modelID: modelID, checkpointID: selected, configuration: configuration)
+        guard result.0.stage == .imitation else { throw DataIntegrityError.invalidData("Only imitation-learning checkpoints can control input.") }
+        return result
+    }
+
     private func digest(_ url: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }

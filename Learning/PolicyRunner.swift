@@ -10,6 +10,7 @@ struct RunProgress: Sendable {
     var activeMemory = 0
     var cacheMemory = 0
     var lastAction = "Waiting for the first observation"
+    var waitingForHuman = false
     var history: [String] = []
 }
 

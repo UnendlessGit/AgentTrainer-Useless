@@ -7,7 +7,10 @@ final class JSONLineCursor<Value: Decodable> {
     private let decoder = JSONDecoder()
     private var buffer = Data()
     private var eof = false
-    init(url: URL) throws { handle = try FileHandle(forReadingFrom: url) }
+    private let recoverTail: Bool
+    init(url: URL, recoverTail: Bool = false) throws {
+        handle = try FileHandle(forReadingFrom: url); self.recoverTail = recoverTail
+    }
     deinit { try? handle.close() }
 
     func next() throws -> Value? {
@@ -18,7 +21,7 @@ final class JSONLineCursor<Value: Decodable> {
                 return try decoder.decode(Value.self, from: data)
             }
             if eof {
-                guard buffer.isEmpty else { throw DataIntegrityError.invalidData("The recording journal has an incomplete final entry.") }
+                guard buffer.isEmpty || recoverTail else { throw DataIntegrityError.invalidData("The recording journal has an incomplete final entry.") }
                 return nil
             }
             guard buffer.count < 1_048_576 else { throw DataIntegrityError.invalidData("A journal entry exceeds the supported size.") }

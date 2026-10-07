@@ -4,6 +4,9 @@ struct SettingsView: View {
     var session: AppSession
     @State private var moving = false
     @State private var shortcuts = ShortcutBindings()
+    @State private var cleanup: CheckpointCleanupPlan?
+    @State private var reviewingCache = false
+    @State private var confirmCleanup = false
     private var store: WorkspaceStore { session.store }
     private var permissions: PermissionService { session.recorder.permissions }
     var body: some View {
@@ -36,6 +39,24 @@ struct SettingsView: View {
                     Picker("MLX cache limit", selection: preference(\.cacheLimitGB)) { ForEach([0, 1, 2, 4, 8], id: \.self) { Text("\($0) GB").tag($0) } }.frame(maxWidth: 380)
                     Toggle("Stop runs on human input by default", isOn: preference(\.stopOnHumanInput))
                 }
+                Surface(title: "Cache & checkpoint storage", symbol: "internaldrive") {
+                    Text("Temporary training indexes can be rebuilt. Checkpoint cleanup preserves all latest/best pointers, model references, and three recent checkpoints per stage.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    HStack {
+                        Button("Clear temporary cache") { cleanCache(oldCheckpoints: false) }
+                        Button("Review older checkpoints") { Task { await reviewCache() } }
+                        if reviewingCache { ProgressView().controlSize(.small) }
+                    }.disabled(reviewingCache || !store.activeOperations.isEmpty || store.migrating)
+                    if let cleanup {
+                        Text("\(cleanup.removable.count) older checkpoints · \(ByteCountFormatter.string(fromByteCount: cleanup.bytes, countStyle: .file)) · \(cleanup.retained) retained")
+                            .font(.callout)
+                        if !cleanup.issues.isEmpty {
+                            Text("Some models were left untouched: \(cleanup.issues.joined(separator: "; "))").font(.caption).foregroundStyle(.orange)
+                        }
+                        Button("Move older checkpoints to Trash…", role: .destructive) { confirmCleanup = true }
+                            .disabled(cleanup.removable.isEmpty || reviewingCache || !store.activeOperations.isEmpty || store.migrating)
+                    }
+                }
                 Surface(title: "Keyboard shortcuts", symbol: "keyboard") {
                     ForEach(ShortcutAction.allCases) { action in
                         VStack(alignment: .leading, spacing: 8) {
@@ -60,7 +81,27 @@ struct SettingsView: View {
                 }
             }.padding(30)
         }.task { permissions.refresh(); shortcuts = store.preferences.shortcuts ?? ShortcutBindings() }
+        .confirmationDialog("Move older checkpoints to Trash?", isPresented: $confirmCleanup) {
+            Button("Move older checkpoints to Trash", role: .destructive) { cleanCache(oldCheckpoints: true) }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Protected checkpoints stay available. Moved checkpoints can be restored from Trash; Finder's Empty Trash reclaims the disk space.") }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in permissions.refresh() }
+    }
+
+    private func reviewCache() async {
+        reviewingCache = true
+        defer { reviewingCache = false }
+        do { cleanup = try await store.reviewCheckpointStorage() }
+        catch { store.error = error.localizedDescription }
+    }
+
+    private func cleanCache(oldCheckpoints: Bool) {
+        reviewingCache = true
+        Task {
+            defer { reviewingCache = false }
+            do { try await store.cleanCheckpointStorage(oldCheckpoints: oldCheckpoints); cleanup = try await store.reviewCheckpointStorage() }
+            catch { store.error = error.localizedDescription }
+        }
     }
 
     private func preference<T>(_ keyPath: WritableKeyPath<AppPreferences, T>) -> Binding<T> {

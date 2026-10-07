@@ -80,7 +80,7 @@ struct RecordingManifest: Codable, Identifiable, Sendable {
         if status == .recording { return "Recording" }
         if status != .complete { return "Review recovered data" }
         if observationCount < 2 { return "Needs more observations" }
-        if kind == .imitation && inputEventCount == 0 { return "No input events" }
+        if kind == .imitation && inputEventCount == 0 { return "Wait-only demonstration" }
         return "Ready for training"
     }
 }
@@ -107,6 +107,7 @@ struct RecordingEdits: Codable, Equatable, Sendable {
     var trimEnd: Double?
     var excluded = false
     var automaticTrimReason: String?
+    var reviewedRecovery: Bool?
 }
 
 struct RecordingItem: Identifiable, Sendable {
@@ -118,7 +119,13 @@ struct RecordingItem: Identifiable, Sendable {
     var instruction: String { edits.instruction ?? manifest.instruction }
     var duration: Double { max(0, min(edits.trimEnd ?? manifest.duration, manifest.duration) - edits.trimStart) }
     var eligible: Bool {
-        !edits.excluded && manifest.status == .complete && manifest.failure == nil && manifest.observationCount >= 2
-            && (manifest.kind == .pretraining || manifest.inputEventCount > 0) && duration > 0
+        let approved = manifest.status == .complete && manifest.failure == nil
+            || manifest.status == .interrupted && edits.reviewedRecovery == true
+        return !edits.excluded && approved && manifest.observationCount >= 2 && duration > 0
+    }
+    var eligibility: String {
+        if edits.excluded { return "Excluded" }
+        if eligible && manifest.status == .interrupted { return "Reviewed recovery" }
+        return manifest.eligibility
     }
 }

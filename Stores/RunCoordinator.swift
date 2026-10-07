@@ -27,6 +27,10 @@ final class RunCoordinator {
         if let saved = try? AtomicFile.decode(RunConfiguration.self, from: url) { configuration = saved }
     }
 
+    func saveConfiguration() {
+        store.perform { try AtomicFile.encode(configuration, to: store.supportURL.appendingPathComponent("run-configuration.json")) }
+    }
+
     func start() async {
         guard !isBusy, !store.migrating, store.activeOperations.isEmpty else { return }
         guard let model = store.models.first(where: { $0.id == configuration.modelID }), model.canRun else {
@@ -92,7 +96,7 @@ final class RunCoordinator {
             phase = .running; message = "Running locally · \((store.preferences.shortcuts ?? ShortcutBindings()).emergency.label) stops immediately"
             workerRunning = true
             TrainingWorker.queue.async { [self] in
-                RunWorker.run(request, source: source, clock: clock, executor: executor, publish: { update, scene in
+                RunWorker.run(request, source: source, clock: clock, executor: executor, humanState: { monitor.snapshot }, publish: { update, scene in
                     DispatchQueue.main.async { [self] in
                         guard generation == id else { return }
                         progress = update

@@ -22,8 +22,9 @@ enum TrainingExampleBuilder {
         guard item.manifest.schemaVersion == 1, item.manifest.actionSchemaVersion == ComputerAction.schemaVersion else {
             throw DataIntegrityError.invalidData("The recording's observation/action version is incompatible with this training pipeline.")
         }
-        let observations = try JSONLineCursor<VisualObservation>(url: item.url.appendingPathComponent("observations.jsonl"))
-        let events = try JSONLineCursor<InputTransition>(url: item.url.appendingPathComponent("events.jsonl"))
+        let recovered = item.manifest.status == .interrupted && item.edits.reviewedRecovery == true
+        let observations = try JSONLineCursor<VisualObservation>(url: item.url.appendingPathComponent("observations.jsonl"), recoverTail: recovered)
+        let events = try JSONLineCursor<InputTransition>(url: item.url.appendingPathComponent("events.jsonl"), recoverTail: recovered)
         var event = try events.next()
         var current = try observations.next()
         var state = item.manifest.initialInputState

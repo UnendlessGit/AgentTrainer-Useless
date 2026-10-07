@@ -21,6 +21,7 @@ struct TrainingProgress: Sendable {
     var cursor = 0
     var stepsPerEpoch = 0
     var trainingExamples = 0
+    var trainingNonWaitExamples = 0
     var validationRecordings = 0
     var excludedOutsideTarget = 0
     var loss: Float?
@@ -94,6 +95,7 @@ enum TrainingWorker {
                     progress.message = message; publish(progress)
                 }
             progress.trainingExamples = dataset.exampleCount
+            progress.trainingNonWaitExamples = dataset.nonWaitExampleCount
             progress.validationRecordings = dataset.validation.count
             progress.excludedOutsideTarget = dataset.excludedOutsideTarget
             MLXRandom.seed(request.settings.seed)
@@ -171,11 +173,13 @@ enum TrainingWorker {
                     trainingLoss: lastLoss, validationLoss: validationLoss, bestValidationLoss: bestLoss)
                 var evaluatedManifest = manifest
                 evaluatedManifest.actionEvaluation = progress.actionEvaluation
-                let saved = try checkpoints.save(evaluatedManifest, isBest: isBest) { directory in
-                    try MLX.save(arrays: Dictionary(uniqueKeysWithValues: model.parameters().flattened()), url: directory.appendingPathComponent("weights.safetensors"))
-                    var state = optimizer.arrays()
-                    for (index, value) in hidden.enumerated() { state["carry.\(index)"] = value }
-                    try MLX.save(arrays: state, url: directory.appendingPathComponent("optimizer.safetensors"))
+                let saved = try autoreleasepool {
+                    try checkpoints.save(evaluatedManifest, isBest: isBest) { directory in
+                        try MLX.save(arrays: Dictionary(uniqueKeysWithValues: model.parameters().flattened()), url: directory.appendingPathComponent("weights.safetensors"))
+                        var state = optimizer.arrays()
+                        for (index, value) in hidden.enumerated() { state["carry.\(index)"] = value }
+                        try MLX.save(arrays: state, url: directory.appendingPathComponent("optimizer.safetensors"))
+                    }
                 }
                 progress.checkpoint = saved.id; checkpointSaved(saved)
             }

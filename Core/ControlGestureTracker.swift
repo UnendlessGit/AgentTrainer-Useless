@@ -7,6 +7,9 @@ struct ControlGestureTracker {
     var bindings: [ShortcutBinding]
     private var modifierPrefix: UInt64?
     private(set) var boundary: UInt64?
+    // Carbon can deliver the stop command before the event tap receives the
+    // shortcut's final key. Its observed modifier prefix still needs exclusion.
+    var stopBoundary: UInt64? { boundary ?? modifierPrefix }
 
     mutating func observe(action: ComputerAction, flags: UInt64, time: UInt64) {
         if case .keyDown(let code) = action, bindings.contains(where: { binding in

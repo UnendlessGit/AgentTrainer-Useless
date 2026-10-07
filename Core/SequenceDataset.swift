@@ -6,6 +6,7 @@ struct IndexedRecording: Sendable {
     let examplesURL: URL
     let offsetsURL: URL
     let count: Int
+    var nonWaitCount: Int = 0
 
     func examples(start: Int, count requested: Int) throws -> [TrainingExample] {
         guard start < count else { return [] }
@@ -82,6 +83,7 @@ struct PreparedDataset: Sendable {
     var fingerprint: String
     var excludedOutsideTarget: Int
     var exampleCount: Int { training.reduce(0) { $0 + $1.count } }
+    var nonWaitExampleCount: Int { training.reduce(0) { $0 + $1.nonWaitCount } }
 
     /// Examples and offsets live on disk; memory use is independent of the number
     /// of frames. A new verified index is built before each run/resume.
@@ -111,7 +113,7 @@ struct PreparedDataset: Sendable {
                   FileManager.default.createFile(atPath: offsetsURL.path, contents: nil) else { throw DataIntegrityError.io("Could not create the training index.") }
             let examples = try FileHandle(forWritingTo: examplesURL), offsets = try FileHandle(forWritingTo: offsetsURL)
             defer { try? examples.close(); try? offsets.close() }
-            var count = 0, position: UInt64 = 0, previousImage = ""
+            var count = 0, nonWaitCount = 0, position: UInt64 = 0, previousImage = ""
             try TrainingExampleBuilder.stream(item: item) { example in
                 try checkCancellation()
                 let bounds = example.observation.globalBounds
@@ -142,10 +144,11 @@ struct PreparedDataset: Sendable {
                 try withUnsafeBytes(of: &length) { try offsets.write(contentsOf: $0) }
                 try examples.write(contentsOf: row); try examples.write(contentsOf: Data([10]))
                 position += UInt64(row.count + 1); count += 1
+                if case .wait = example.targetAction {} else { nonWaitCount += 1 }
             }
             guard count > 0 else { throw DataIntegrityError.invalidData("“\(item.name)” has no usable targets after trimming and capture-boundary checks.") }
             try examples.synchronize(); try offsets.synchronize()
-            indexed.append(IndexedRecording(item: item, examplesURL: examplesURL, offsetsURL: offsetsURL, count: count))
+            indexed.append(IndexedRecording(item: item, examplesURL: examplesURL, offsetsURL: offsetsURL, count: count, nonWaitCount: nonWaitCount))
         }
         var generator = StableRandom(seed: settings.seed)
         indexed.shuffle(using: &generator)

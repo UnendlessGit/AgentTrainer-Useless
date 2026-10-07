@@ -26,7 +26,7 @@ final class InputCapture: @unchecked Sendable {
     }
 
     var snapshot: InputState { lock.withLock { state } }
-    var controlGestureBoundary: UInt64? { lock.withLock { controlGesture.boundary } }
+    var controlGestureBoundary: UInt64? { lock.withLock { controlGesture.stopBoundary } }
     var secureKeyboardInputActive: Bool { settings.keyboard && IsSecureEventInputEnabled() }
 
     @MainActor func start() throws {

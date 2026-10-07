@@ -12,6 +12,7 @@ struct RecordingInspector: View {
     @State private var trimStart = 0.0
     @State private var trimEnd = 0.0
     @State private var excluded = false
+    @State private var reviewedRecovery = false
     @State private var folderID: UUID?
     @State private var error: String?
     @State private var loading = true
@@ -70,13 +71,19 @@ struct RecordingInspector: View {
                             ForEach(store.folders.filter { $0.kind == item.manifest.kind }) { Text(store.folderPath($0)).tag(Optional($0.id)) }
                         }
                         Toggle("Exclude from training", isOn: $excluded)
+                        if item.manifest.status == .interrupted {
+                            Text(item.manifest.failure ?? "Recording was interrupted.").font(.caption).foregroundStyle(.secondary)
+                            Toggle("I reviewed this recovered recording", isOn: $reviewedRecovery)
+                            Text("Only complete journal entries are used. Trim incomplete work before enabling training.").font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                     Section {
                         LabeledContent("Recorded", value: item.manifest.createdAt.formatted())
                         LabeledContent("Input events", value: item.manifest.inputEventCount.formatted())
-                        LabeledContent("Status", value: item.manifest.eligibility)
+                        LabeledContent("Status", value: item.eligibility)
                     }
                     Button("Save changes") { save() }.buttonStyle(.borderedProminent)
+                        .disabled(!store.activeOperations.isEmpty || store.migrating)
                     if let error { Text(error).foregroundStyle(.red).font(.caption) }
                 }.formStyle(.grouped).frame(width: 320)
             }
@@ -84,6 +91,7 @@ struct RecordingInspector: View {
         .task {
             name = item.name; instruction = item.instruction; trimStart = item.edits.trimStart
             trimEnd = item.edits.trimEnd ?? item.manifest.duration; excluded = item.edits.excluded; folderID = item.manifest.folderID
+            reviewedRecovery = item.edits.reviewedRecovery ?? false
             do {
                 let url = item.url
                 let result = try await Task.detached {
@@ -103,7 +111,9 @@ struct RecordingInspector: View {
     }
     private func save() {
         do {
-            let edits = RecordingEdits(name: name, instruction: instruction, trimStart: trimStart, trimEnd: trimEnd, excluded: excluded)
+            var edits = item.edits
+            edits.name = name; edits.instruction = instruction; edits.trimStart = trimStart; edits.trimEnd = trimEnd
+            edits.excluded = excluded; edits.reviewedRecovery = reviewedRecovery
             try store.editRecording(item, edits: edits)
             if let folderID, folderID != item.manifest.folderID { try store.moveRecording(item, to: folderID) }
             store.notice = "Recording changes saved. Original data preserved."

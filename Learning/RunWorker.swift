@@ -11,6 +11,7 @@ struct RunRequest: Sendable {
 
 enum RunWorker {
     static func run(_ request: RunRequest, source: CaptureFrameSource, clock: SessionClock, executor: AgentInputExecutor,
+                    humanState: @escaping @Sendable () -> InputState,
                     publish: @escaping @Sendable (RunProgress, CapturedScene?) -> Void,
                     finished: @escaping @Sendable (String) -> Void) {
         var progress = RunProgress()
@@ -19,16 +20,11 @@ enum RunWorker {
             let configuration = request.model.configuration
             try configuration.validate()
             let checkpoints = CheckpointStore(root: URL(fileURLWithPath: request.preferences.checkpointsPath))
-            var identifier = request.model.trainedCheckpoint.flatMap(UUID.init(uuidString:))
-            if request.configuration.useBestCheckpoint {
-                let pointerURL = checkpoints.root.appendingPathComponent(request.model.id.uuidString).appendingPathComponent("best-imitation.json")
-                if FileManager.default.fileExists(atPath: pointerURL.path) {
-                    identifier = try AtomicFile.decode(CheckpointPointer.self, from: pointerURL).checkpointID
-                }
+            guard let identifier = request.model.trainedCheckpoint.flatMap(UUID.init(uuidString:)) else {
+                throw DataIntegrityError.invalidData("Choose a model with a compatible imitation-learning checkpoint.")
             }
-            guard let identifier else { throw DataIntegrityError.invalidData("Choose a model with a compatible imitation-learning checkpoint.") }
-            let (metadata, directory) = try checkpoints.load(modelID: request.model.id, checkpointID: identifier, configuration: configuration)
-            guard metadata.stage == .imitation else { throw DataIntegrityError.invalidData("Only imitation-learning checkpoints can control input.") }
+            let (_, directory) = try checkpoints.inference(modelID: request.model.id, latestID: identifier,
+                configuration: configuration, preferBest: request.configuration.useBestCheckpoint)
             Memory.memoryLimit = request.preferences.memoryLimitGB * 1_073_741_824
             Memory.cacheLimit = request.preferences.cacheLimitGB * 1_073_741_824
             let model = PolicyNetwork(configuration: configuration)
@@ -41,6 +37,19 @@ enum RunWorker {
             var previous: ComputerAction = .wait(seconds: 0), previousTime = start, lastPublish = start
             while !executor.isStopped && clock.now < deadline {
                 try autoreleasepool {
+                    let human = humanState()
+                    if !human.keys.isEmpty || !human.buttons.isEmpty {
+                        if request.configuration.stopOnHumanInput { executor.stop("Stopped by keyboard or mouse input."); return }
+                        // In sharing mode, human-held modifiers/buttons must never
+                        // combine with a new agent press. Resume after release.
+                        progress.waitingForHuman = true
+                        if clock.now >= lastPublish + 250_000_000 {
+                            progress.elapsed = Double(clock.now - start) / 1e9
+                            publish(progress, nil); lastPublish = clock.now
+                        }
+                        Thread.sleep(forTimeInterval: 0.01); return
+                    }
+                    progress.waitingForHuman = false
                     guard let scene = try source.latestScene() else { Thread.sleep(forTimeInterval: 0.01); return }
                     try request.target.validate(observedBounds: scene.bounds)
                     let decisionTime = clock.now
@@ -53,6 +62,10 @@ enum RunWorker {
                         Thread.sleep(forTimeInterval: min(0.005, Double(scheduled - min(scheduled, clock.now)) / 1e9))
                     }
                     guard !executor.isStopped, clock.now < deadline else { return }
+                    let beforeEmission = humanState()
+                    guard beforeEmission.keys.isEmpty, beforeEmission.buttons.isEmpty else {
+                        throw DataIntegrityError.invalidData("Human input began during a decision. The run stopped before emitting that action.")
+                    }
                     try request.target.validate(observedBounds: decision.observationBounds, action: decision.action, state: executor.state)
                     try executor.execute(decision.action, bounds: decision.observationBounds)
                     previous = decision.action; previousTime = clock.now

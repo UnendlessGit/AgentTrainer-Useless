@@ -2,6 +2,60 @@ import XCTest
 @testable import AgentTrainer
 
 final class CheckpointStoreTests: XCTestCase {
+    func testInferenceDoesNotSelectStaleBestFromAnotherDatasetOrArchitecture() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = CheckpointStore(root: root), modelID = UUID(), config = PolicyConfiguration()
+        func save(_ configuration: PolicyConfiguration, dataset: String, best: Bool) throws -> UUID {
+            let manifest = CheckpointManifest(modelID: modelID, configuration: configuration,
+                configurationFingerprint: configuration.fingerprint, datasetFingerprint: dataset, trainingRecordingIDs: [],
+                validationRecordingIDs: [], stage: .imitation, settings: TrainingSettings(), step: 1, epoch: 0,
+                sampleCursor: 1, trainingLoss: 1)
+            return try store.save(manifest, isBest: best) { url in
+                try Data([1]).write(to: url.appendingPathComponent("weights.safetensors"))
+                try Data([2]).write(to: url.appendingPathComponent("optimizer.safetensors"))
+            }.id
+        }
+        let best = try save(config, dataset: "original", best: true)
+        let changedData = try save(config, dataset: "different", best: false)
+        XCTAssertEqual(try store.inference(modelID: modelID, latestID: changedData, configuration: config, preferBest: true).0.id, changedData)
+        let sameData = try save(config, dataset: "original", best: false)
+        XCTAssertEqual(try store.inference(modelID: modelID, latestID: sameData, configuration: config, preferBest: true).0.id, best)
+        XCTAssertEqual(try store.inference(modelID: modelID, latestID: sameData, configuration: config, preferBest: false).0.id, sameData)
+        var changed = config; changed.memoryDepth += 1
+        let changedModel = try save(changed, dataset: "original", best: false)
+        XCTAssertEqual(try store.inference(modelID: modelID, latestID: changedModel, configuration: changed, preferBest: true).0.id, changedModel)
+    }
+
+    func testCleanupProtectsReferencesRecentCopiesAndFailsClosedOnBadPointers() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = CheckpointStore(root: root)
+        var model = AIModel(name: "Cleanup fixture")
+        var ids: [UUID] = []
+        for index in 0..<7 {
+            var metadata = CheckpointManifest(modelID: model.id, configuration: model.configuration,
+                configurationFingerprint: model.configuration.fingerprint, datasetFingerprint: "test", trainingRecordingIDs: [],
+                validationRecordingIDs: [], stage: .imitation, settings: TrainingSettings(), step: index + 1, epoch: index,
+                sampleCursor: 0, trainingLoss: 1)
+            metadata.createdAt = Date(timeIntervalSince1970: Double(index))
+            _ = try store.save(metadata, isBest: index == 0) { url in
+                try Data([1]).write(to: url.appendingPathComponent("weights.safetensors"))
+                try Data([2]).write(to: url.appendingPathComponent("optimizer.safetensors"))
+            }
+            ids.append(metadata.id)
+        }
+        model.trainedCheckpoint = ids[1].uuidString
+        let plan = try CheckpointMaintenance.review(root: root, models: [model])
+        XCTAssertEqual(Set(plan.removable.map(\.lastPathComponent)), Set([ids[2], ids[3]].map(\.uuidString)))
+        XCTAssertEqual(plan.retained, 5)
+        XCTAssertTrue(plan.issues.isEmpty)
+        try Data("broken".utf8).write(to: root.appendingPathComponent(model.id.uuidString).appendingPathComponent("best-imitation.json"))
+        let protected = try CheckpointMaintenance.review(root: root, models: [model])
+        XCTAssertTrue(protected.removable.isEmpty)
+        XCTAssertEqual(protected.issues.count, 1)
+    }
+
     func testFailureDoesNotDestroyPreviousCheckpointAndCorruptionIsRejected() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

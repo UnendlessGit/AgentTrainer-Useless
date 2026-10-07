@@ -51,6 +51,7 @@ struct TrainView: View {
                 }
             }.padding(30)
         }.task { if trainer.selectedModelID == nil { trainer.selectedModelID = store.models.first?.id } }
+        .onDisappear { trainer.saveSettings() }
     }
 
     private func stageCard(_ stage: TrainingStage, title: String, symbol: String, description: String) -> some View {
@@ -116,6 +117,13 @@ struct TrainView: View {
             }
             Text("Learning rate \(String(format: "%.6f", p.learningRate)) · \(p.trainingExamples.formatted()) training decisions · \(p.validationRecordings) held-out recordings · \(p.excludedOutsideTarget) actions outside the capture target excluded.")
                 .font(.caption).foregroundStyle(.secondary)
+            if p.stage == .imitation && p.trainingExamples > 0 {
+                Text("Training data: \(p.trainingNonWaitExamples.formatted()) input transitions and \((p.trainingExamples - p.trainingNonWaitExamples).formatted()) waits.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if p.trainingNonWaitExamples == 0 {
+                    Text("These recordings only teach waiting. Add action demonstrations to teach other behavior.").font(.caption).foregroundStyle(.orange)
+                }
+            }
             Text(p.checkpoint.map { "Latest checkpoint: \($0.uuidString.prefix(8)) · weights, optimizer and memory saved" } ?? "No checkpoint written yet.")
                 .font(.caption).foregroundStyle(.secondary)
             Text("Metal acceleration is active during tensor work. macOS does not expose a reliable per-app GPU utilization percentage here.")

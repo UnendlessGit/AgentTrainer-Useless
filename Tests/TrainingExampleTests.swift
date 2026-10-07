@@ -2,6 +2,56 @@ import XCTest
 @testable import AgentTrainer
 
 final class TrainingExampleTests: XCTestCase {
+    func testWaitOnlyDemonstrationIsEligibleAndTeachesInaction() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let journal = try RecordingJournal(root: root, manifest: RecordingManifest(name: "Wait when empty", folderID: UUID(), kind: .imitation,
+            target: CaptureTarget(), settings: RecordingSettings()))
+        for time: UInt64 in [10, 100] {
+            try journal.append(observation: VisualObservation(id: 0, timeNanoseconds: time, sourceTimeNanoseconds: 10,
+                imageFile: "frames/0.jpg", width: 1, height: 1, globalBounds: CaptureRect(CGRect(x: 0, y: 0, width: 10, height: 10)),
+                state: InputState(), reusedPixels: time == 100))
+        }
+        try journal.finish(at: 150)
+        let item = RecordingItem(manifest: journal.snapshot, edits: RecordingEdits(), url: journal.url)
+        XCTAssertTrue(item.eligible)
+        var actions: [ComputerAction] = []
+        try TrainingExampleBuilder.stream(item: item) { actions.append($0.targetAction) }
+        XCTAssertEqual(actions.count, 2)
+        for action in actions { guard case .wait = action else { return XCTFail("No input should be invented for idle observations") } }
+    }
+
+    func testRecoveredTailRequiresReviewAndPreservesOriginalBytes() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let journal = try RecordingJournal(root: root, manifest: RecordingManifest(name: "Interrupted", folderID: UUID(), kind: .imitation,
+            target: CaptureTarget(), settings: RecordingSettings()))
+        try Data([0]).write(to: journal.url.appendingPathComponent("frames/0.jpg"))
+        for time: UInt64 in [10, 100] {
+            try journal.append(observation: VisualObservation(id: 0, timeNanoseconds: time, sourceTimeNanoseconds: time,
+                imageFile: "frames/0.jpg", width: 1, height: 1, globalBounds: CaptureRect(CGRect(x: 0, y: 0, width: 10, height: 10)),
+                state: InputState(), reusedPixels: false))
+        }
+        try journal.append(event: InputTransition(id: 0, timeNanoseconds: 11, action: .keyDown(code: 0)))
+        try journal.append(event: InputTransition(id: 0, timeNanoseconds: 12, action: .keyUp(code: 0)))
+        try journal.checkpoint(at: 150, force: true)
+        let eventsURL = journal.url.appendingPathComponent("events.jsonl")
+        let handle = try FileHandle(forWritingTo: eventsURL)
+        try handle.seekToEnd(); try handle.write(contentsOf: Data("{\"torn\":".utf8)); try handle.close()
+        let original = try Data(contentsOf: eventsURL)
+        var item = RecordingItem(manifest: try RecordingJournal.recover(at: journal.url), edits: RecordingEdits(), url: journal.url)
+        XCTAssertFalse(item.eligible)
+        XCTAssertThrowsError(try TrainingExampleBuilder.stream(item: item) { _ in })
+        item.edits.reviewedRecovery = true
+        var examples: [TrainingExample] = []
+        try TrainingExampleBuilder.stream(item: item) { examples.append($0) }
+        XCTAssertTrue(item.eligible)
+        XCTAssertEqual(examples.map(\.targetAction), [.keyDown(code: 0), .keyUp(code: 0)])
+        XCTAssertEqual(try Data(contentsOf: eventsURL), original)
+        item.manifest.status = .complete; item.manifest.failure = nil
+        XCTAssertThrowsError(try TrainingExampleBuilder.stream(item: item) { _ in })
+    }
+
     func testStreamingTargetsKeepShortTransitionsAndReconstructPriorState() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

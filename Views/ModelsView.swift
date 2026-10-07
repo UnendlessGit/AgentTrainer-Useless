@@ -5,6 +5,7 @@ struct ModelsView: View {
     @State private var selectedID: UUID?
     @State private var creating = false
     @State private var name = "My first agent"
+    @State private var deleting: AIModel?
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             PageHeader(title: "AI Models", subtitle: "Shape what your agents see, remember and do.") {
@@ -20,15 +21,32 @@ struct ModelsView: View {
                                 Label(model.name, systemImage: "cpu").font(.headline)
                                 Text(model.compatibility).font(.caption).foregroundStyle(.secondary)
                             }.padding(.vertical, 10).tag(Optional(model.id))
-                            .contextMenu { Button("Duplicate configuration") { store.perform { selectedID = try store.createModel(name: model.name + " copy", copying: model).id } } }
+                            .contextMenu {
+                                Button("Duplicate configuration") { duplicate(model) }
+                                Button("Move model to Trash…", role: .destructive) { deleting = model }
+                            }
                         }
                     }.frame(minWidth: 180, idealWidth: 230, maxWidth: 300)
                     if let model = store.models.first(where: { $0.id == selectedID }) {
                         ModelEditor(store: store, original: model).id(model.id)
                     } else { EmptyState(symbol: "cpu", title: "Select a model", message: "Review its architecture, capabilities and training data.") }
                 }
+                if let model = store.models.first(where: { $0.id == selectedID }) {
+                    HStack {
+                        Button("Duplicate configuration") { duplicate(model) }.accessibilityLabel("Duplicate model configuration")
+                        Spacer()
+                        Button("Move model to Trash…", role: .destructive) { deleting = model }.accessibilityLabel("Move model to Trash")
+                    }
+                }
             }
         }.padding(30)
+        .confirmationDialog("Move this model to Trash?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
+            Button("Move model to Trash", role: .destructive) {
+                if let deleting { store.perform { try store.trashModel(deleting); selectedID = store.models.first?.id } }
+                deleting = nil
+            }
+            Button("Cancel", role: .cancel) { deleting = nil }
+        } message: { Text("The configuration can be restored from Trash. Its checkpoints are preserved in checkpoint storage.") }
         .task { if selectedID == nil { selectedID = store.models.first?.id } }
         .sheet(isPresented: $creating) {
             VStack(alignment: .leading, spacing: 20) {
@@ -41,6 +59,10 @@ struct ModelsView: View {
                 }.buttonStyle(.borderedProminent).disabled(name.trimmingCharacters(in: .whitespaces).isEmpty).accessibilityIdentifier("models.confirmCreate") }
             }.padding(28).frame(width: 440)
         }
+    }
+
+    private func duplicate(_ model: AIModel) {
+        store.perform { selectedID = try store.createModel(name: model.name + " copy", copying: model).id }
     }
 }
 

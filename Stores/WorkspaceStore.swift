@@ -30,10 +30,11 @@ final class WorkspaceStore {
     }
 
     func load() async {
-        guard !loading else { return }
+        guard !loading, activeOperations.isEmpty else { return }
         loading = true
         defer { loading = false }
         let recordingRoot = recordingRoot, modelRoot = modelRoot
+        let checkpoints = CheckpointStore(root: URL(fileURLWithPath: preferences.checkpointsPath))
         do {
             let result = try await Task.detached(priority: .userInitiated) {
                 try FileManager.default.createDirectory(at: recordingRoot, withIntermediateDirectories: true)
@@ -60,7 +61,27 @@ final class WorkspaceStore {
                 var models: [AIModel] = []
                 for url in try FileManager.default.contentsOfDirectory(at: modelRoot, includingPropertiesForKeys: nil)
                     where url.pathExtension == "json" {
-                    do { models.append(try AtomicFile.decode(AIModel.self, from: url)) }
+                    do {
+                        var model = try AtomicFile.decode(AIModel.self, from: url)
+                        // A crash after committing a checkpoint pointer but before
+                        // saving the small model file must not strand completed work.
+                        var recovered = false
+                        for stage in TrainingStage.allCases {
+                            do {
+                                guard let saved = try checkpoints.latestMetadata(modelID: model.id, stage: stage),
+                                      saved.configurationFingerprint == model.configuration.fingerprint,
+                                      saved.configuration.fingerprint == model.configuration.fingerprint,
+                                      saved.preprocessingVersion == 1, saved.actionCodecVersion == PolicyActionCodec.version else { continue }
+                                if stage == .pretraining, model.pretrainedCheckpoint != saved.id.uuidString {
+                                    model.pretrainedCheckpoint = saved.id.uuidString; model.pretrainedFingerprint = saved.configurationFingerprint; recovered = true
+                                } else if stage == .imitation, model.trainedCheckpoint != saved.id.uuidString {
+                                    model.trainedCheckpoint = saved.id.uuidString; model.trainedFingerprint = saved.configurationFingerprint; recovered = true
+                                }
+                            } catch { issues.append("\(model.name): \(error.localizedDescription)") }
+                        }
+                        if recovered { try AtomicFile.encode(model, to: url) }
+                        models.append(model)
+                    }
                     catch { issues.append("\(url.lastPathComponent): \(error.localizedDescription)") }
                 }
                 return (folders, recordings.sorted { $0.manifest.createdAt > $1.manifest.createdAt }, models.sorted { $0.createdAt < $1.createdAt }, issues)
@@ -160,6 +181,52 @@ final class WorkspaceStore {
         updated.name = try validatedName(model.name); updated.modifiedAt = Date()
         try AtomicFile.encode(updated, to: modelRoot.appendingPathComponent(model.id.uuidString + ".json"))
         if let index = models.firstIndex(where: { $0.id == updated.id }) { models[index] = updated } else { models.append(updated) }
+    }
+
+    func trashModel(_ model: AIModel) throws {
+        try requireIdleMutation()
+        let url = modelRoot.appendingPathComponent(model.id.uuidString + ".json")
+        try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        models.removeAll { $0.id == model.id }
+        notice = "Moved “\(model.name)” to Trash. Its checkpoints remain in storage."
+    }
+
+    func trashRecording(_ item: RecordingItem) throws {
+        try requireIdleMutation()
+        guard item.manifest.status != .recording else { throw DataIntegrityError.invalidData("Stop recording before moving it to Trash.") }
+        try FileManager.default.trashItem(at: item.url, resultingItemURL: nil)
+        recordings.removeAll { $0.id == item.id }
+        notice = "Moved “\(item.name)” to Trash. Restore it to the recordings folder to use it again."
+    }
+
+    func reviewCheckpointStorage() async throws -> CheckpointCleanupPlan {
+        let root = URL(fileURLWithPath: preferences.checkpointsPath), models = models
+        return try await Task.detached(priority: .utility) { try CheckpointMaintenance.review(root: root, models: models) }.value
+    }
+
+    func cleanCheckpointStorage(oldCheckpoints: Bool) async throws {
+        try requireIdleMutation()
+        activeOperations.insert("maintenance")
+        defer { activeOperations.remove("maintenance") }
+        let root = URL(fileURLWithPath: preferences.checkpointsPath), models = models
+        let count = try await Task.detached(priority: .utility) {
+            if oldCheckpoints {
+                // Re-review immediately before moving, rather than trusting a stale UI plan.
+                let plan = try CheckpointMaintenance.review(root: root, models: models)
+                for url in plan.removable { try FileManager.default.trashItem(at: url, resultingItemURL: nil) }
+                return plan.removable.count
+            }
+            let cache = root.appendingPathComponent(".datasets")
+            if FileManager.default.fileExists(atPath: cache.path) { try FileManager.default.removeItem(at: cache) }
+            return 0
+        }.value
+        notice = oldCheckpoints ? "Moved \(count) older checkpoints to Trash. Empty Trash in Finder to reclaim their disk space."
+            : "Temporary training indexes cleared. Recordings and checkpoints preserved."
+    }
+
+    private func requireIdleMutation() throws {
+        try requireWritable()
+        guard activeOperations.isEmpty else { throw DataIntegrityError.invalidData("Stop the active operation before removing workspace data.") }
     }
 
     func savePreferences(_ updated: AppPreferences) throws {
