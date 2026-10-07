@@ -1,17 +1,51 @@
 import XCTest
 import CoreGraphics
+import AppKit
 @testable import AgentTrainer
 
 private final class CapturedInputEvents: @unchecked Sendable {
     private let lock = NSLock()
     private var events: [(CGEventType, Int64, UInt64, Int64, Int64)] = []
+    private var media: [MediaKeyEvent.Transition] = []
     func append(_ event: CGEvent) {
-        lock.withLock { events.append((event.type, event.getIntegerValueField(.keyboardEventKeycode), event.flags.rawValue, event.getIntegerValueField(.eventSourceUserData), event.getIntegerValueField(.keyboardEventAutorepeat))) }
+        lock.withLock {
+            events.append((event.type, event.getIntegerValueField(.keyboardEventKeycode), event.flags.rawValue, event.getIntegerValueField(.eventSourceUserData), event.getIntegerValueField(.keyboardEventAutorepeat)))
+            if let transition = MediaKeyEvent.decode(event) { media.append(transition) }
+        }
     }
     var values: [(CGEventType, Int64, UInt64, Int64, Int64)] { lock.withLock { events } }
+    var mediaValues: [MediaKeyEvent.Transition] { lock.withLock { media } }
 }
 
 final class AgentInputExecutorTests: XCTestCase {
+    func testMediaKeysUseNativeTransitionsAndEmergencyReleases() throws {
+        let bounds = CaptureRect(CGRect(x: 0, y: 0, width: 100, height: 100))
+        for code: UInt16 in [72, 73, 74] {
+            let events = CapturedInputEvents()
+            let executor = AgentInputExecutor(capabilities: ActionCapabilities(), emit: events.append)
+            try executor.execute(.keyDown(code: code), bounds: bounds)
+            try executor.execute(.keyRepeat(code: code), bounds: bounds)
+            XCTAssertEqual(executor.state.keys, [code])
+            executor.stop("Emergency")
+            XCTAssertEqual(events.mediaValues, [
+                .init(code: code, down: true, isRepeat: false),
+                .init(code: code, down: true, isRepeat: true),
+                .init(code: code, down: false, isRepeat: false)])
+            XCTAssertTrue(events.values.allSatisfy { $0.0.rawValue == 14 && $0.3 == AgentInputExecutor.marker })
+            XCTAssertTrue(executor.state.keys.isEmpty)
+        }
+    }
+
+    func testMediaDecoderRejectsOtherSystemEventsAndInvalidTransitions() throws {
+        let ordinary = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 72, keyDown: true))
+        XCTAssertNil(MediaKeyEvent.decode(ordinary))
+        for (subtype, payload) in [(7, 0x0a00), (8, 0x0c00), (8, 0x100a00)] {
+            let event = try XCTUnwrap(NSEvent.otherEvent(with: .systemDefined, location: .zero, modifierFlags: [],
+                timestamp: 1, windowNumber: 0, context: nil, subtype: Int16(subtype), data1: payload, data2: -1)?.cgEvent)
+            XCTAssertNil(MediaKeyEvent.decode(event))
+        }
+    }
+
     func testHumanSharingDiscardsStaleDecisionsAndResumesAfterRelease() throws {
         let events = CapturedInputEvents()
         let executor = AgentInputExecutor(capabilities: ActionCapabilities(), emit: events.append)

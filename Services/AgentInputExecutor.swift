@@ -104,9 +104,15 @@ final class AgentInputExecutor: @unchecked Sendable {
         case .keyDown(let code), .keyUp(let code), .keyRepeat(let code):
             let down: Bool
             if case .keyUp = action { down = false } else { down = true }
-            event = CGEvent(keyboardEventSource: eventSource, virtualKey: code, keyDown: down)
-            if case .keyRepeat = action { event?.setIntegerValueField(.keyboardEventAutorepeat, value: 1) }
-            if (54...63).contains(code) { event?.type = .flagsChanged }
+            let isRepeat: Bool
+            if case .keyRepeat = action { isRepeat = true } else { isRepeat = false }
+            if MediaKeyEvent.flavors[code] != nil {
+                event = MediaKeyEvent.make(code: code, down: down, isRepeat: isRepeat, source: eventSource)
+            } else {
+                event = CGEvent(keyboardEventSource: eventSource, virtualKey: code, keyDown: down)
+                if isRepeat { event?.setIntegerValueField(.keyboardEventAutorepeat, value: 1) }
+                if (54...63).contains(code) { event?.type = .flagsChanged }
+            }
         case .buttonDown(let button), .buttonUp(let button):
             let down: Bool
             if case .buttonDown = action { down = true } else { down = false }

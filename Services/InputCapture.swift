@@ -1,6 +1,39 @@
 import Foundation
 import CoreGraphics
 import Carbon
+import AppKit
+
+/// macOS volume keys arrive as NX_SYSDEFINED / AUX_CONTROL_BUTTONS, not
+/// ordinary virtual-key events. Keep the existing key vocabulary while using
+/// the native event payload in both directions (IOKit's IOLLEvent/ev_keymap).
+enum MediaKeyEvent {
+    static let type = CGEventType(rawValue: 14)!
+    static let flavors: [UInt16: Int] = [72: 0, 73: 1, 74: 7]
+
+    struct Transition: Equatable {
+        var code: UInt16
+        var down: Bool
+        var isRepeat: Bool
+    }
+
+    static func decode(_ event: CGEvent) -> Transition? {
+        guard event.type == type, let native = NSEvent(cgEvent: event), native.subtype.rawValue == 8,
+              let code = flavors.first(where: { $0.value == (native.data1 >> 16) & 0xffff })?.key else { return nil }
+        let state = (native.data1 >> 8) & 0xff
+        guard state == 10 || state == 11 else { return nil }
+        return Transition(code: code, down: state == 10, isRepeat: state == 10 && native.data1 & 1 != 0)
+    }
+
+    static func make(code: UInt16, down: Bool, isRepeat: Bool, source: CGEventSource?) -> CGEvent? {
+        guard let flavor = flavors[code] else { return nil }
+        let payload = (flavor << 16) | ((down ? 10 : 11) << 8) | (down && isRepeat ? 1 : 0)
+        let event = NSEvent.otherEvent(with: .systemDefined, location: .zero, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0, context: nil,
+            subtype: 8, data1: payload, data2: -1)?.cgEvent
+        event?.setSource(source)
+        return event
+    }
+}
 
 /// The event tap callback does no disk I/O. A bounded queue writes every accepted
 /// transition; overflow stops recording visibly instead of silently losing input.
@@ -45,7 +78,7 @@ final class InputCapture: @unchecked Sendable {
         lock.withLock { state = initial; active = true }
         let types: [CGEventType] = [.keyDown, .keyUp, .flagsChanged, .leftMouseDown, .leftMouseUp, .rightMouseDown,
                                    .rightMouseUp, .otherMouseDown, .otherMouseUp, .mouseMoved, .leftMouseDragged,
-                                   .rightMouseDragged, .otherMouseDragged, .scrollWheel]
+                                   .rightMouseDragged, .otherMouseDragged, .scrollWheel, MediaKeyEvent.type]
         let mask = types.reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
         guard let eventTap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
             options: .listenOnly, eventsOfInterest: mask, callback: { _, type, event, context in
@@ -81,7 +114,13 @@ final class InputCapture: @unchecked Sendable {
         guard event.getIntegerValueField(.eventSourceUserData) != 0x4154524E else { return }
         let code = UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode))
         var action: ComputerAction?
+        var isRepeat = type == .keyDown && event.getIntegerValueField(.keyboardEventAutorepeat) != 0
         switch type {
+        case MediaKeyEvent.type where settings.keyboard:
+            if let media = MediaKeyEvent.decode(event) {
+                action = media.down ? .keyDown(code: media.code) : .keyUp(code: media.code)
+                isRepeat = media.isRepeat
+            }
         case .keyDown where settings.keyboard: action = .keyDown(code: code)
         case .keyUp where settings.keyboard: action = .keyUp(code: code)
         case .flagsChanged where settings.keyboard:
@@ -105,13 +144,18 @@ final class InputCapture: @unchecked Sendable {
         let updatedState = lock.withLock {
             controlGesture.observe(action: action, flags: event.flags.rawValue, time: time)
             state.apply(action)
-            state.cursorX = event.location.x; state.cursorY = event.location.y
+            // Auxiliary key payloads have no meaningful pointer location.
+            if type != MediaKeyEvent.type {
+                state.cursorX = event.location.x; state.cursorY = event.location.y
+            }
             return state
         }
         onInput(updatedState)
         let transition = InputTransition(id: 0, timeNanoseconds: time, action: action,
-                                         isRepeat: type == .keyDown && event.getIntegerValueField(.keyboardEventAutorepeat) != 0,
-                                         modifiers: event.flags.rawValue, cursorX: event.location.x, cursorY: event.location.y,
+                                         isRepeat: isRepeat,
+                                         modifiers: event.flags.rawValue,
+                                         cursorX: type == MediaKeyEvent.type ? nil : event.location.x,
+                                         cursorY: type == MediaKeyEvent.type ? nil : event.location.y,
                                          rawDeltaX: event.getIntegerValueField(.mouseEventDeltaX),
                                          rawDeltaY: event.getIntegerValueField(.mouseEventDeltaY))
         guard slots.wait(timeout: .now()) == .success else {
