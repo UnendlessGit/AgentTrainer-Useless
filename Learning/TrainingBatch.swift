@@ -96,12 +96,29 @@ enum PolicyLoss {
             dynamicsArguments: a(.arguments), hidden: Array(arrays.dropFirst(BatchField.allCases.count)))
     }
 
-    static func values(_ model: PolicyNetwork, _ arrays: [MLXArray], stage: TrainingStage) -> [MLXArray] {
+    static func values(_ model: PolicyNetwork, _ arrays: [MLXArray], stage: TrainingStage, balanceInputChoices: Bool = false) -> [MLXArray] {
         let output = forward(model, arrays)
-        return [loss(output, arrays, stage: stage)] + output.hidden.map { stopGradient($0) }
+        return [loss(output, arrays, stage: stage, balanceInputChoices: balanceInputChoices)] + output.hidden.map { stopGradient($0) }
     }
 
-    static func loss(_ output: PolicyForward, _ arrays: [MLXArray], stage: TrainingStage) -> MLXArray {
+    /// The optional factorization preserves the recorded wait/input frequency.
+    /// Only conditional input choice is normalized over input-bearing targets, so
+    /// abundant waits do not dilute the gradient for rare key/pointer choices.
+    static func actionLoss(logits: MLXArray, targets: MLXArray, valid: MLXArray,
+                           balanceInputChoices: Bool) -> MLXArray {
+        guard balanceInputChoices, logits.dim(-1) > 1 else {
+            return sum(crossEntropy(logits: logits, targets: targets) * valid) / maximum(sum(valid), 1)
+        }
+        let input = logits[0..., 0..., 1...]
+        let isInput = (targets .> 0).asType(.int32)
+        let gate = stacked([logits[0..., 0..., 0], logSumExp(input, axis: -1)], axis: -1)
+        let gateLoss = sum(crossEntropy(logits: gate, targets: isInput) * valid) / maximum(sum(valid), 1)
+        let inputValid = isInput.asType(.float32) * valid
+        let choice = crossEntropy(logits: input, targets: maximum(targets - 1, 0))
+        return gateLoss + sum(choice * inputValid) / maximum(sum(inputValid), 1)
+    }
+
+    static func loss(_ output: PolicyForward, _ arrays: [MLXArray], stage: TrainingStage, balanceInputChoices: Bool = false) -> MLXArray {
         func a(_ field: BatchField) -> MLXArray { arrays[field.rawValue] }
         let loss: MLXArray
         if stage == .pretraining {
@@ -122,8 +139,16 @@ enum PolicyLoss {
             let offset = mean(square(selectedOffset - a(.offsets)), axis: -1)
             let selectedArguments = takeAlong(output.continuousArguments, a(.actions).expandedDimensions(axes: [2, 3]), axis: 2).squeezed(axis: 2)
             let arguments = mean(square(selectedArguments - a(.arguments)), axis: -1)
-            let perStep = action + 0.25 * timing + a(.pointerMask) * (spatial + 2 * offset) + a(.continuousMask) * arguments
-            loss = sum(perStep * valid) / maximum(sum(valid), 1)
+            if balanceInputChoices {
+                let choice = actionLoss(logits: output.actionLogits + a(.actionMask), targets: a(.actions), valid: valid,
+                                        balanceInputChoices: true)
+                let auxiliary = 0.25 * timing + a(.pointerMask) * (spatial + 2 * offset) + a(.continuousMask) * arguments
+                loss = choice + sum(auxiliary * valid) / maximum(sum(valid), 1)
+            } else {
+                // Preserve the existing objective and reduction order for old runs.
+                let perStep = action + 0.25 * timing + a(.pointerMask) * (spatial + 2 * offset) + a(.continuousMask) * arguments
+                loss = sum(perStep * valid) / maximum(sum(valid), 1)
+            }
         }
         return loss
     }

@@ -12,7 +12,8 @@ struct TrainView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 PageHeader(title: "Train", subtitle: "Turn demonstrations into understanding, on your Mac.") {
-                    StatusPill(title: trainer.progress.phase.rawValue, color: trainer.isBusy ? .blue : .secondary)
+                    StatusPill(title: trainer.progress.modelID == trainer.selectedModelID ? trainer.progress.phase.rawValue : "Ready",
+                               color: trainer.isBusy ? .blue : .secondary)
                 }
                 Surface(title: "Training model", symbol: "cpu") {
                     Picker("Model", selection: $trainer.selectedModelID) {
@@ -46,6 +47,9 @@ struct TrainView: View {
                             Stepper("Run budget: \(trainer.settings.maximumRunMinutes) min", value: $trainer.settings.maximumRunMinutes, in: 1...30)
                         }
                     }.disabled(trainer.isBusy)
+                    Toggle("Balance input choices against waits", isOn: $trainer.settings.balancesInputChoices).disabled(trainer.isBusy)
+                    Text("Keeps the recorded wait/input frequency while giving rarer input choices more training weight. Applies to imitation learning.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Text("Validation uses separate recordings. With one recording, no validation score is reported. A run pauses at its time budget; Resume restores its data split, optimizer and memory.")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
@@ -74,6 +78,13 @@ struct TrainView: View {
     private var progressPanel: some View {
         let p = trainer.progress
         return Surface(title: p.stage == .pretraining ? "Pre-training activity" : "Training activity", symbol: "chart.xyaxis.line") {
+            if let request = trainer.lastRequest {
+                Text("Results for \(request.model.name)").font(.headline)
+                if request.model.id != trainer.selectedModelID {
+                    Text("These results belong to the previous run. Start training to see results for the selected model.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             HStack {
                 Text(p.message).foregroundStyle(p.phase == .failed ? Color.red : .secondary)
                 Spacer()
@@ -121,9 +132,9 @@ struct TrainView: View {
                                     Text(row.predictions.formatted())
                                 }
                             }
-                        }.font(.caption).padding(.top, 8)
+                        }.font(.caption).padding(.top, 8).frame(maxWidth: .infinity, alignment: .leading)
                         Text("Key presses and releases are separate targets. Correct releases do not establish that the model chose the right key to press.")
-                            .font(.caption).foregroundStyle(.secondary).padding(.top, 4)
+                            .font(.caption).foregroundStyle(.secondary).padding(.top, 4).frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }

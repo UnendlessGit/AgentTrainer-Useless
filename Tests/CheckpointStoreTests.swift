@@ -6,11 +6,12 @@ final class CheckpointStoreTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = CheckpointStore(root: root), modelID = UUID(), config = PolicyConfiguration()
-        func save(_ configuration: PolicyConfiguration, dataset: String, best: Bool) throws -> UUID {
-            let manifest = CheckpointManifest(modelID: modelID, configuration: configuration,
+        func save(_ configuration: PolicyConfiguration, dataset: String, best: Bool, balance: Bool = false) throws -> UUID {
+            var manifest = CheckpointManifest(modelID: modelID, configuration: configuration,
                 configurationFingerprint: configuration.fingerprint, datasetFingerprint: dataset, trainingRecordingIDs: [],
                 validationRecordingIDs: [], stage: .imitation, settings: TrainingSettings(), step: 1, epoch: 0,
                 sampleCursor: 1, trainingLoss: 1)
+            manifest.settings.balancesInputChoices = balance
             return try store.save(manifest, isBest: best) { url in
                 try Data([1]).write(to: url.appendingPathComponent("weights.safetensors"))
                 try Data([2]).write(to: url.appendingPathComponent("optimizer.safetensors"))
@@ -25,6 +26,8 @@ final class CheckpointStoreTests: XCTestCase {
         var changed = config; changed.memoryDepth += 1
         let changedModel = try save(changed, dataset: "original", best: false)
         XCTAssertEqual(try store.inference(modelID: modelID, latestID: changedModel, configuration: changed, preferBest: true).0.id, changedModel)
+        let changedLoss = try save(config, dataset: "original", best: false, balance: true)
+        XCTAssertEqual(try store.inference(modelID: modelID, latestID: changedLoss, configuration: config, preferBest: true).0.id, changedLoss)
     }
 
     func testCleanupProtectsReferencesRecentCopiesAndFailsClosedOnBadPointers() throws {

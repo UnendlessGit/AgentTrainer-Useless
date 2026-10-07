@@ -37,6 +37,21 @@ final class PolicyNetworkTests: XCTestCase {
         XCTAssertNil(legacy.actionBreakdown)
     }
 
+    func testBalancedChoiceLossPreservesGateFrequencyAndHandlesWaitOnlyBatches() {
+        let logits = MLXArray.zeros([1, 3, 3])
+        let targets = MLXArray([Int32(0), 1, 2], [1, 3])
+        let valid = MLXArray([Float(1), 1, 0], [1, 3])
+        let joint = PolicyLoss.actionLoss(logits: logits, targets: targets, valid: valid, balanceInputChoices: false)
+        let balanced = PolicyLoss.actionLoss(logits: logits, targets: targets, valid: valid, balanceInputChoices: true)
+        XCTAssertEqual(joint.item(Float.self), log(Float(3)), accuracy: 1e-6)
+        XCTAssertEqual(balanced.item(Float.self), (log(Float(3)) + log(Float(1.5))) / 2 + log(Float(2)), accuracy: 1e-6)
+        let waits = MLXArray.zeros([1, 3], type: Int32.self)
+        XCTAssertEqual(PolicyLoss.actionLoss(logits: logits, targets: waits, valid: valid, balanceInputChoices: true).item(Float.self), log(Float(3)), accuracy: 1e-6)
+        XCTAssertEqual(PolicyLoss.actionLoss(logits: MLXArray.zeros([1, 3, 1]), targets: waits, valid: valid, balanceInputChoices: true).item(Float.self), 0, accuracy: 1e-6)
+        let forced = MLXArray([Float(-1e9), 0, -1e9], [1, 1, 3])
+        XCTAssertEqual(PolicyLoss.actionLoss(logits: forced, targets: MLXArray.ones([1, 1], type: Int32.self), valid: MLXArray.ones([1, 1]), balanceInputChoices: true).item(Float.self), 0, accuracy: 1e-6)
+    }
+
     private func configuration(_ architecture: TemporalArchitecture) -> PolicyConfiguration {
         var c = PolicyConfiguration()
         c.imageSize = 128; c.visualWidth = 64; c.visualDepth = 2

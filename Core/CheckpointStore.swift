@@ -96,7 +96,8 @@ struct CheckpointStore: Sendable {
             }
             // A prior run's best pointer may remain after configuration/data changes
             // or a new run without validation. It must not override current weights.
-            if best.configurationFingerprint == configuration.fingerprint && best.datasetFingerprint == latest.datasetFingerprint {
+            if best.configurationFingerprint == configuration.fingerprint && best.datasetFingerprint == latest.datasetFingerprint
+                && best.settings.balancesInputChoices == latest.settings.balancesInputChoices {
                 selected = best.id
             }
         }

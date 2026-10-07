@@ -99,13 +99,18 @@ final class TrainingPipelineTests: XCTestCase {
         try checkWorkerPauseResume(architecture: .attention)
     }
 
-    private func checkWorkerPauseResume(architecture: TemporalArchitecture) throws {
+    func testBalancedChoiceWorkerResumeMatchesUninterruptedWeights() throws {
+        try checkWorkerPauseResume(architecture: .recurrent, balanceInputChoices: true)
+    }
+
+    private func checkWorkerPauseResume(architecture: TemporalArchitecture, balanceInputChoices: Bool = false) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let items = try [recording(root: root), recording(root: root)]
         var model = AIModel(name: "Training pipeline"); model.configuration = configuration()
         model.configuration.memory = architecture
         var settings = TrainingSettings(); settings.epochs = 1; settings.batchSize = 1; settings.checkpointInterval = 100
+        settings.balancesInputChoices = balanceInputChoices
         var preferences = AppPreferences.defaults(at: root)
         preferences.memoryLimitGB = 4; preferences.cacheLimitGB = 1
         let pause = TrainingControl(), first = ProgressCollector()

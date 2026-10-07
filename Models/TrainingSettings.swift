@@ -11,6 +11,12 @@ struct TrainingSettings: Codable, Equatable, Sendable {
     var checkpointInterval = 100
     var validationFraction = 0.2
     var seed: UInt64 = 42
+    // Absent in older checkpoints: preserve their original joint action loss.
+    var balancedInputChoices: Bool?
+    var balancesInputChoices: Bool {
+        get { balancedInputChoices ?? false }
+        set { balancedInputChoices = newValue }
+    }
     /// Each run is bounded, per the acceptance objective. Resumable checkpoints
     /// let the user continue with additional explicitly started runs.
     var maximumRunMinutes = 20

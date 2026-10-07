@@ -139,7 +139,7 @@ enum TrainingWorker {
             eval(model)
             model.train(true)
             let stage = request.stage
-            let lossGradient = valueAndGrad(model: model) { model, arrays in PolicyLoss.values(model, arrays, stage: stage) }
+            let lossGradient = valueAndGrad(model: model) { model, arrays in PolicyLoss.values(model, arrays, stage: stage, balanceInputChoices: request.settings.balancesInputChoices) }
             var schedule = SequenceSchedule(recordings: dataset.training, batchSize: request.settings.batchSize,
                 sequenceLength: model.configuration.sequenceLength, seed: request.settings.seed &+ UInt64(epoch))
             guard (0...schedule.count).contains(cursor), epoch >= 0, optimizer.step == step else {
@@ -210,7 +210,7 @@ enum TrainingWorker {
                         try autoreleasepool {
                             let batch = try TrainingBatch.load(plan: plan, configuration: model.configuration, stage: stage, checkCancellation: {})
                             let output = PolicyLoss.forward(model, batch.arrays + validationHidden)
-                            let loss = PolicyLoss.loss(output, batch.arrays, stage: stage)
+                            let loss = PolicyLoss.loss(output, batch.arrays, stage: stage, balanceInputChoices: request.settings.balancesInputChoices)
                             validationHidden = output.hidden.map { stopGradient($0) }
                             eval(loss, validationHidden)
                             let value = loss.item(Float.self)
