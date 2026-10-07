@@ -2,6 +2,51 @@ import XCTest
 @testable import AgentTrainer
 
 @MainActor final class WorkspaceStoreTests: XCTestCase {
+    func testWindowReloadCannotRecoverJournalsDuringStorageMigration() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(supportURL: root)
+        await store.load()
+        let journal = try RecordingJournal(root: store.recordingRoot, manifest: RecordingManifest(
+            name: "Unfinished", folderID: UUID(), kind: .imitation, target: CaptureTarget(), settings: RecordingSettings()))
+        let manifestURL = journal.url.appendingPathComponent("manifest.json")
+        let original = try Data(contentsOf: manifestURL)
+        store.migrating = true
+        await store.load()
+        XCTAssertEqual(try Data(contentsOf: manifestURL), original, "A window reload must not recover the source while it is being copied.")
+        XCTAssertTrue(store.recordings.isEmpty)
+        XCTAssertThrowsError(try store.createFolder(name: "During move", kind: .imitation))
+        store.migrating = false
+        await store.load()
+        XCTAssertEqual(store.recordings.first?.manifest.status, .interrupted)
+        withExtendedLifetime(journal) {}
+    }
+
+    func testRecordingMigrationRefreshesURLsBeforeReleasingTheWorkspace() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(supportURL: root.appendingPathComponent("Support"))
+        await store.load()
+        let journal = try RecordingJournal(root: store.recordingRoot, manifest: RecordingManifest(
+            name: "Move me", folderID: try XCTUnwrap(store.folders.first?.id), kind: .imitation,
+            target: CaptureTarget(), settings: RecordingSettings()))
+        try journal.finish(at: 1_000_000_000)
+        await store.load()
+        let oldURL = try XCTUnwrap(store.recordings.first?.url)
+        let destination = root.appendingPathComponent("Moved recordings")
+        try await store.relocateStorage(\.recordingsPath, to: destination)
+        let moved = try XCTUnwrap(store.recordings.first)
+        XCTAssertEqual(moved.url.standardizedFileURL, destination.appendingPathComponent(oldURL.lastPathComponent).standardizedFileURL)
+        XCTAssertEqual(moved.id, journal.snapshot.id)
+        XCTAssertFalse(store.migrating)
+        XCTAssertFalse(store.loading)
+        XCTAssertTrue(store.canAccessWorkspace)
+        var edits = moved.edits; edits.name = "Edited at destination"
+        try store.editRecording(moved, edits: edits)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: moved.url.appendingPathComponent("edits.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldURL.appendingPathComponent("edits.json").path))
+    }
+
     func testUnsupportedModelVersionIsReportedAndPreservedOnLoad() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

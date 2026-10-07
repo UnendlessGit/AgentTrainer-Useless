@@ -13,7 +13,7 @@ final class WorkspaceStore {
     var error: String?
     var notice: String?
     private var preferencesFailure: String?
-    var canAccessWorkspace: Bool { preferencesFailure == nil }
+    var canAccessWorkspace: Bool { preferencesFailure == nil && !loading }
 
     let supportURL: URL
     private var preferencesURL: URL { supportURL.appendingPathComponent("preferences.json") }
@@ -42,8 +42,10 @@ final class WorkspaceStore {
         } else { preferences = .defaults(at: self.supportURL) }
     }
 
-    func load() async {
-        guard canAccessWorkspace, !loading, activeOperations.isEmpty else { return }
+    func load(afterMigration: Bool = false) async {
+        // Loading also recovers interrupted journals and checkpoint pointers.
+        // Never let a new window start that work against a source being copied.
+        guard canAccessWorkspace, !migrating || afterMigration, activeOperations.isEmpty else { return }
         loading = true
         defer { loading = false }
         let recordingRoot = recordingRoot, modelRoot = modelRoot
@@ -277,6 +279,7 @@ final class WorkspaceStore {
 
     func requireWritable() throws {
         if let preferencesFailure { throw DataIntegrityError.io(preferencesFailure) }
+        guard !loading else { throw DataIntegrityError.io("Wait for the workspace to finish loading before making changes.") }
         guard !migrating else { throw DataIntegrityError.io("Wait for the storage move to finish before changing the workspace.") }
     }
 

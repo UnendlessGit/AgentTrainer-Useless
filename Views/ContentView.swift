@@ -41,7 +41,13 @@ struct ContentView: View {
                 case .settings: SettingsView(session: session)
                 }
             }
+            .disabled(session.store.loading)
             .background(.background.opacity(0.6))
+            .overlay {
+                if session.store.loading {
+                    ProgressView("Loading workspace…").padding(24).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if let notice = session.store.notice {
                     HStack {

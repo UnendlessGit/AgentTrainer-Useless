@@ -53,7 +53,7 @@ extension WorkspaceStore {
         updated = preferences
         updated[keyPath: keyPath] = destination.path
         try savePreferences(updated)
-        await load()
+        await load(afterMigration: true)
         notice = "Storage updated. The original data remains at \(source.path)."
     }
 }
