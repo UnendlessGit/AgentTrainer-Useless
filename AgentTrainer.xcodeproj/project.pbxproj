@@ -50,6 +50,7 @@
 		8089C3E99F27486329A29C5A /* PolicyNetworkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A708AB66EE12CC0262F51830 /* PolicyNetworkTests.swift */; };
 		80D19D37200C16D869F810EC /* AgentInputExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05E6179263AF237EFCCA4A73 /* AgentInputExecutor.swift */; };
 		82DC2DBDA49B8C06B4F75F5F /* AIModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C23C6162CB3D6C46919A3209 /* AIModel.swift */; };
+		8645EF107424F1F24E2EFBB0 /* RecordingAssignmentPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E930126957BA608D7825BB67 /* RecordingAssignmentPicker.swift */; };
 		89A5D09379AF352B730E4784 /* CheckpointStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADDAB79202F3A47354F4757E /* CheckpointStoreTests.swift */; };
 		8A6E86AA12D84DF9717BB12C /* ModifierState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62173ABC831298B6B190CCC7 /* ModifierState.swift */; };
 		8C1E54ED7DC9B2ADEB036063 /* TrainingCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F90474B20BE4E388BD1C5E2B /* TrainingCoordinator.swift */; };
@@ -177,6 +178,7 @@
 		CD7EEADC3D233A97531E916E /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		CFC93FD7757320B8559FE7A5 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		E401343420C63811BD560D22 /* ObservationPreprocessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObservationPreprocessor.swift; sourceTree = "<group>"; };
+		E930126957BA608D7825BB67 /* RecordingAssignmentPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingAssignmentPicker.swift; sourceTree = "<group>"; };
 		E9641671A11513CC0CA58AD8 /* KeyPermissionToggle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyPermissionToggle.swift; sourceTree = "<group>"; };
 		F0CD7A550695255EAA9F30B5 /* AgentTrainer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AgentTrainer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F252E2ED729CBBAD86DC1FEC /* ControlGestureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlGestureTests.swift; sourceTree = "<group>"; };
@@ -219,6 +221,7 @@
 				E9641671A11513CC0CA58AD8 /* KeyPermissionToggle.swift */,
 				8DAEC9EFEC7B845C64571CC3 /* LibraryView.swift */,
 				435180A4847802B75634C6A5 /* ModelsView.swift */,
+				E930126957BA608D7825BB67 /* RecordingAssignmentPicker.swift */,
 				BCED686D0EB1F1975BE25183 /* RecordingInspector.swift */,
 				8C31DE9F561334A1F0187FEE /* RecordView.swift */,
 				2339667A040869418AF5B5FB /* RunView.swift */,
@@ -541,6 +544,7 @@
 				C96B525C3A820811F42D0518 /* PolicyRunner.swift in Sources */,
 				4A69DC15DE649F4BAA493784 /* RecordView.swift in Sources */,
 				1D3D1309AE8F0EA1D387095A /* Recording.swift in Sources */,
+				8645EF107424F1F24E2EFBB0 /* RecordingAssignmentPicker.swift in Sources */,
 				780B660A987EA04740BCD001 /* RecordingCoordinator.swift in Sources */,
 				2D7AFDDA605257AF7A3DD2EE /* RecordingForm.swift in Sources */,
 				9A26CC507CBDD6B7D5C4FF64 /* RecordingInspector.swift in Sources */,

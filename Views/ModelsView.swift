@@ -150,11 +150,8 @@ private struct ModelEditor: View {
                 Button(showRecordings ? "Hide individual recordings" : "Choose individual recordings") { showRecordings.toggle() }
                     .accessibilityLabel("Choose individual recordings")
                 if showRecordings {
-                    ForEach(store.recordings.filter { $0.manifest.kind == .imitation }) { item in
-                        Toggle(item.name, isOn: Binding(get: { draft.imitationRecordingIDs.contains(item.id) }, set: {
-                            if $0 { draft.imitationRecordingIDs.insert(item.id) } else { draft.imitationRecordingIDs.remove(item.id) }
-                        }))
-                    }
+                    RecordingAssignmentPicker(store: store, selectedIDs: $draft.imitationRecordingIDs,
+                                              folderIDs: draft.imitationFolderIDs)
                 }
             }
             Section("Pre-training data") {
