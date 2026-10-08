@@ -30,11 +30,17 @@ Use event-level targets so several transitions between images remain learnable. 
 
 ## Pre-training
 
-Pre-training uses only separately assigned pre-training data. Predict future visual representations or spatial changes conditioned on preceding actions; include a representation-preserving reconstruction/variance objective to prevent collapse. The action decoder is not trained to copy recorded behavior in this stage. Imitation initializes the shared encoder and temporal weights from the compatible pretrained checkpoint. Hold-out sets split by recording, not adjacent frames, to avoid temporal leakage.
+Pre-training uses only separately assigned pre-training data. The current head predicts future patch-average RGB values from visual tokens, temporal features and the recorded action/arguments, with extra weight on changing patches. Fixed pixel targets cannot collapse along with the encoder. The action decoder is not trained to copy recorded behavior in this stage. Imitation initializes the shared encoder and temporal weights from the compatible pretrained checkpoint. Hold-out sets split by recording, not adjacent frames, to avoid temporal leakage.
+
+For input actions, future pixels must be captured after the action. For waits, a new image captured after the decision is usable even when capture precedes the next observation's delivery: no input occurs at the wait's endpoint. Explicit static reuse remains supported. Dataset indexing and batch masks share this rule. The pre-training dataset fingerprint versions target eligibility independently of imitation, so an older pre-training run cannot silently resume over changed targets; its weights remain usable for imitation.
+
+The current linear RGB head has a known capacity limit: for a fixed scene/history, changing only an action adds the same pre-sigmoid offset at every patch within a color channel. It cannot model an action comparison that brightens one patch while darkening another in that channel. A nonlinear spatial/action interaction needs a controlled real-data comparison before adopting a replacement. Useful downstream pre-training benefit remains an acceptance gate.
 
 ## Checkpoints and resource ownership
 
 A resumable checkpoint contains model weights, optimizer state, recurrent carry, stage, step/epoch/cursor, deterministic shuffle seed, data selection/split identity and preprocessing/action/configuration fingerprints. The current optimizer loop has no stochastic augmentation or dropout; adding either requires preserving its RNG state as well. Write a complete new checkpoint directory, synchronize it, then atomically replace the latest/best pointer. Never overwrite the previous valid checkpoint in place. A configuration mismatch makes the checkpoint unusable until the user restores the compatible configuration or retrains.
+
+The validation pointer tracks lowest loss on recorded histories, not measured live task completion. Run explicitly distinguishes it from the latest training checkpoint. Both need live comparison when selecting a policy; the delayed-recall experiment passed with final attention weights while its lower-loss checkpoint failed.
 
 Library previews build cancellable disk time/offset indexes and decode only the selected frame and a bounded input interval. Temporary indexes do not replace source journals. Reviewed interrupted or failed recordings may use a valid complete prefix; malformed complete rows and missing images still fail validation. Checkpoint cleanup preserves every best/latest pointer, every model reference and three recent copies per stage, and fails closed for a model with malformed metadata.
 

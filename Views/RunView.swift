@@ -87,8 +87,11 @@ struct RunView: View {
                                     Text("This model was trained without task instructions.").font(.caption).foregroundStyle(.secondary)
                                 }
                             }
-                            Toggle("Use best validation checkpoint", isOn: $runner.configuration.useBestCheckpoint)
-                            Text("Uses the latest checkpoint if no best checkpoint matches this configuration and dataset.").font(.caption).foregroundStyle(.secondary)
+                            Toggle("Use checkpoint with lowest validation loss", isOn: $runner.configuration.useBestCheckpoint)
+                            Text(runner.configuration.useBestCheckpoint
+                                 ? "Selected by loss on recorded history. Uses the latest checkpoint if no validation checkpoint matches this configuration and dataset."
+                                 : "Uses the latest training checkpoint. Compare live task completion with the checkpoint selected by validation loss.")
+                                .font(.caption).foregroundStyle(.secondary)
                             Toggle("Choose the most likely action", isOn: $runner.configuration.deterministic)
                             if !runner.configuration.deterministic {
                                 Slider(value: $runner.configuration.temperature, in: 0.05...2) { Text("Sampling temperature") }

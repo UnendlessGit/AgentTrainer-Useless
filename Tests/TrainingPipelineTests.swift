@@ -21,7 +21,8 @@ final class TrainingPipelineTests: XCTestCase {
         return c
     }
 
-    private func recording(root: URL, kind: LibraryKind = .imitation) throws -> RecordingItem {
+    private func recording(root: URL, kind: LibraryKind = .imitation, includeActions: Bool = true,
+                           availabilityLag: UInt64 = 0) throws -> RecordingItem {
         let journal = try RecordingJournal(root: root, manifest: RecordingManifest(name: "Recorded fixture", folderID: UUID(), kind: kind,
             target: CaptureTarget(), settings: RecordingSettings()))
         for index in 0..<6 {
@@ -35,9 +36,9 @@ final class TrainingPipelineTests: XCTestCase {
             CGImageDestinationAddImage(destination, image, nil)
             XCTAssertTrue(CGImageDestinationFinalize(destination))
             let time = UInt64(index + 1) * 100_000_000
-            try journal.append(observation: VisualObservation(id: 0, timeNanoseconds: time, sourceTimeNanoseconds: time,
+            try journal.append(observation: VisualObservation(id: 0, timeNanoseconds: time + availabilityLag, sourceTimeNanoseconds: time,
                 imageFile: file, width: 1, height: 1, globalBounds: CaptureRect(CGRect(x: 0, y: 0, width: 100, height: 100)), state: InputState(), reusedPixels: false))
-            if index < 5 {
+            if includeActions && index < 5 {
                 try journal.append(event: InputTransition(id: 0, timeNanoseconds: time + 10_000_000, action: .keyDown(code: 0)))
                 try journal.append(event: InputTransition(id: 0, timeNanoseconds: time + 20_000_000, action: .keyUp(code: 0)))
             }
@@ -110,6 +111,32 @@ final class TrainingPipelineTests: XCTestCase {
         XCTAssertEqual(before.exampleCount, after.exampleCount)
         XCTAssertNotEqual(before.fingerprint, after.fingerprint,
                           "Resume must detect a changed future target, even if no decision uses it as input.")
+    }
+
+    func testObservationOnlyPretrainingUsesChangingFramesDuringWaits() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let item = try recording(root: root, kind: .pretraining, includeActions: false, availabilityLag: 20_000_000)
+        let dataset = try PreparedDataset.prepare(items: [item], configuration: configuration(), settings: TrainingSettings(), stage: .pretraining,
+            root: root.appendingPathComponent("index"), checkCancellation: {}, progress: { _ in })
+        XCTAssertEqual(dataset.exampleCount, 5, "Every changing frame except the last has a future target.")
+        XCTAssertEqual(dataset.nonWaitExampleCount, 0)
+        let rows = try dataset.training[0].examples(start: 0, count: 5)
+        XCTAssertTrue(rows.allSatisfy(\.hasCausalFuture))
+        var row = try XCTUnwrap(rows.first)
+        XCTAssertLessThan(try XCTUnwrap(row.nextObservation?.sourceTimeNanoseconds),
+                          row.decisionTime + UInt64(row.targetDelay * 1e9), "Capture precedes wait completion/availability.")
+        let batch = try TrainingBatch.load(plan: SequenceBatchPlan(recordings: dataset.training, chunk: 0),
+            configuration: configuration(), stage: .pretraining, checkCancellation: {})
+        XCTAssertEqual(sum(batch.arrays[BatchField.futureMask.rawValue]).item(Float.self), 2)
+
+        row.targetAction = .keyDown(code: 0); row.targetDelay = 0.15
+        XCTAssertFalse(row.hasCausalFuture, "Input actions still require pixels captured after the action.")
+        row.targetAction = .wait(seconds: 0.1)
+        row.nextObservation?.sourceTimeNanoseconds = row.decisionTime - 1
+        XCTAssertFalse(row.hasCausalFuture, "A newly delivered but stale frame is not a future of this decision.")
+        row.nextObservation?.reusedPixels = true
+        XCTAssertTrue(row.hasCausalFuture, "Explicit static reuse remains supported.")
     }
 
     func testWorkerPauseResumeMatchesUninterruptedTrainingAndSavesValidation() throws {

@@ -66,10 +66,7 @@ struct TrainingBatch {
                 valid.append(1); count += 1
                 if stage == .pretraining, let next = row.nextObservation {
                     future.append(try read(next.imageFile).1)
-                    // A non-static capture whose pixels precede the action is not
-                    // evidence of that action's outcome.
-                    let actionTime = row.decisionTime + UInt64(max(0, row.targetDelay) * 1e9)
-                    futureMask.append(next.reusedPixels || next.sourceTimeNanoseconds >= actionTime ? 1 : 0)
+                    futureMask.append(row.hasCausalFuture ? 1 : 0)
                 } else { future.append(zero); futureMask.append(0) }
             }
         }

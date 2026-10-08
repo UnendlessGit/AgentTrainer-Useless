@@ -11,6 +11,17 @@ struct TrainingExample: Codable, Sendable {
     var targetDelay: Double
     var nextObservation: VisualObservation?
     var instruction: String
+
+    var hasCausalFuture: Bool {
+        guard let next = nextObservation else { return false }
+        if next.reusedPixels { return true }
+        // Waiting introduces no input at its endpoint. A new image captured
+        // during that interval is a valid future of the decision, even though
+        // capture precedes the next observation's availability timestamp.
+        if case .wait = targetAction { return next.sourceTimeNanoseconds >= decisionTime }
+        let actionTime = decisionTime + UInt64(max(0, targetDelay) * 1e9)
+        return next.sourceTimeNanoseconds >= actionTime
+    }
 }
 
 enum TrainingExampleBuilder {

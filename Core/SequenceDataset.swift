@@ -95,7 +95,8 @@ struct PreparedDataset: Sendable {
         var success = false
         defer { if !success { try? FileManager.default.removeItem(at: root) } }
         var fingerprint = SHA256(), indexed: [IndexedRecording] = [], excluded = 0
-        fingerprint.update(data: Data("dataset-v1|\(stage.rawValue)|\(configuration.fingerprint)|\(settings.seed)|\(settings.validationFraction)".utf8))
+        let datasetVersion = stage == .pretraining ? "dataset-v2-wait-futures" : "dataset-v1"
+        fingerprint.update(data: Data("\(datasetVersion)|\(stage.rawValue)|\(configuration.fingerprint)|\(settings.seed)|\(settings.validationFraction)".utf8))
         let codec = PolicyActionCodec(capabilities: configuration.capabilities)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         for item in items.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
@@ -135,9 +136,7 @@ struct PreparedDataset: Sendable {
                     throw DataIntegrityError.invalidData("“\(item.name)” contains \(example.targetAction.label), which this model cannot produce in that input state. Enable the corresponding capability in AI Models, or trim/exclude that part of the recording.")
                 }
                 if stage == .pretraining {
-                    guard let next = example.nextObservation else { return }
-                    let actionTime = example.decisionTime + UInt64(max(0, example.targetDelay) * 1e9)
-                    guard next.reusedPixels || next.sourceTimeNanoseconds >= actionTime else { return }
+                    guard example.hasCausalFuture, let next = example.nextObservation else { return }
                     guard RecordingJournal.isSafeFramePath(next.imageFile) else { throw DataIntegrityError.invalidTimeline }
                     finalFutureImage = next.imageFile
                 }
