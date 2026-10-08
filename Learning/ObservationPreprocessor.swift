@@ -73,8 +73,15 @@ enum ObservationPreprocessor {
         return values.map { $0.isFinite ? min(100, max(-100, $0)) : 0 }
     }
 
-    static func instruction(_ text: String) -> [Int32] {
-        let bytes = Array(text.utf8.prefix(PolicyNetwork.instructionLength)).map { Int32($0) + 1 }
+    static func validateInstruction(_ text: String) throws {
+        guard text.utf8.count <= PolicyNetwork.instructionLength else {
+            throw DataIntegrityError.invalidData("The task instruction uses \(text.utf8.count) UTF-8 bytes. Shorten it to at most \(PolicyNetwork.instructionLength) bytes for this model.")
+        }
+    }
+
+    static func instruction(_ text: String) throws -> [Int32] {
+        try validateInstruction(text)
+        let bytes = text.utf8.map { Int32($0) + 1 }
         return bytes + Array(repeating: 0, count: PolicyNetwork.instructionLength - bytes.count)
     }
 }

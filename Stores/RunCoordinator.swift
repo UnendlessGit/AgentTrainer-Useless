@@ -47,6 +47,10 @@ final class RunCoordinator {
         guard let model = store.models.first(where: { $0.id == configuration.modelID }), model.canRun else {
             store.error = "Select a model with a compatible imitation-learning checkpoint."; return
         }
+        if model.configuration.instructionConditioning {
+            do { try ObservationPreprocessor.validateInstruction(configuration.instruction) }
+            catch { store.error = error.localizedDescription; return }
+        }
         permissions.refresh()
         guard permissions.accessibility && permissions.screenRecording && permissions.inputMonitoring else {
             store.error = "Allow Screen Recording, Input Monitoring and Accessibility in Settings before running."; return

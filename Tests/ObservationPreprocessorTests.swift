@@ -21,14 +21,19 @@ final class ObservationPreprocessorTests: XCTestCase {
         XCTAssertGreaterThan(sum(wide[3, 0..., 0...]).item(Float.self), 0)
     }
 
-    func testContextAndInstructionHaveStableShapesAndIncludeHeldState() {
+    func testContextAndInstructionHaveStableShapesAndIncludeHeldState() throws {
         var state = InputState(); state.keys = [0, 56]; state.buttons = [0]; state.cursorX = 50; state.cursorY = 20
         let values = ObservationPreprocessor.context(state: state, bounds: CaptureRect(CGRect(x: 0, y: 0, width: 100, height: 100)),
             previousAction: .scroll(dx: 0, dy: 12), elapsed: 0.5, sourceAge: 0.1)
         XCTAssertEqual(values.count, PolicyNetwork.contextSize)
         XCTAssertEqual(values[0], 1); XCTAssertEqual(values[56], 1); XCTAssertEqual(values[128], 1)
         XCTAssertEqual(values[133], 0.5); XCTAssertEqual(values[134], 0.2)
-        XCTAssertEqual(ObservationPreprocessor.instruction("A").first, 66)
-        XCTAssertEqual(ObservationPreprocessor.instruction(String(repeating: "a", count: 200)).count, PolicyNetwork.instructionLength)
+        XCTAssertEqual(try ObservationPreprocessor.instruction("A").first, 66)
+        let unicode = String(repeating: "é", count: 48)
+        let encoded = try ObservationPreprocessor.instruction(unicode)
+        XCTAssertEqual(encoded.count, PolicyNetwork.instructionLength)
+        XCTAssertEqual(String(decoding: encoded.map { UInt8($0 - 1) }, as: UTF8.self), unicode)
+        XCTAssertThrowsError(try ObservationPreprocessor.instruction(unicode + "a"))
+        XCTAssertThrowsError(try ObservationPreprocessor.instruction(String(repeating: "a", count: 200)))
     }
 }

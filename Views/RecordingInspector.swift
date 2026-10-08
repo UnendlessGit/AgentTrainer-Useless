@@ -58,7 +58,11 @@ struct RecordingInspector: View {
                     }
                 }.frame(minWidth: 500).padding(.trailing, 16)
                 Form {
-                    Section("Metadata") { TextField("Name", text: $name); TextField("Instruction", text: $instruction, axis: .vertical) }
+                    Section("Metadata") {
+                        TextField("Name", text: $name)
+                        TextField("Instruction", text: $instruction, axis: .vertical)
+                        InstructionSizeHint(text: instruction)
+                    }
                     Section("Nondestructive trim") {
                         if let reason = item.edits.automaticTrimReason { Text(reason).font(.caption).foregroundStyle(.secondary) }
                         TextField("Start (seconds)", value: $trimStart, format: .number)

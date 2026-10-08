@@ -2,6 +2,26 @@ import Foundation
 
 enum TrainingStage: String, Codable, CaseIterable, Sendable { case pretraining, imitation }
 
+enum TrainingInitialization: String, Codable, CaseIterable, Identifiable, Sendable {
+    case automatic = "Pre-trained if available"
+    case trained = "Latest trained checkpoint"
+    case scratch = "New random weights"
+    var id: String { rawValue }
+}
+
+enum InitialWeights: Codable, Equatable, Sendable {
+    case scratch
+    case checkpoint(id: UUID, stage: TrainingStage)
+
+    var label: String {
+        switch self {
+        case .scratch: return "Started from new random weights."
+        case .checkpoint(let id, let stage):
+            return "Started from \(stage == .pretraining ? "pre-training" : "imitation") checkpoint \(id.uuidString.prefix(8))."
+        }
+    }
+}
+
 struct TrainingSettings: Codable, Equatable, Sendable {
     var epochs = 10
     var batchSize = 2
@@ -11,6 +31,12 @@ struct TrainingSettings: Codable, Equatable, Sendable {
     var checkpointInterval = 100
     var validationFraction = 0.2
     var seed: UInt64 = 42
+    // Missing in older settings: preserve automatic pretrained/scratch behavior.
+    var initialization: TrainingInitialization?
+    var startingWeights: TrainingInitialization {
+        get { initialization ?? .automatic }
+        set { initialization = newValue }
+    }
     // Absent in older checkpoints: preserve their original joint action loss.
     var balancedInputChoices: Bool?
     var balancesInputChoices: Bool {
@@ -51,6 +77,8 @@ struct CheckpointManifest: Codable, Sendable {
     var validationLoss: Float?
     var bestValidationLoss: Float?
     var actionEvaluation: ActionEvaluation?
+    // Nil means provenance was not recorded by an earlier app version.
+    var initialWeights: InitialWeights?
     var createdAt = Date()
     var files: [String: String] = [:]
 }

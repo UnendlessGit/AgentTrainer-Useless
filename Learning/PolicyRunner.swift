@@ -38,10 +38,11 @@ final class PolicyRunner {
     private var pendingMemory: MemoryState?
     private let instruction: MLXArray
 
-    init(model: PolicyNetwork, permissions: ActionCapabilities, instruction: String) {
+    init(model: PolicyNetwork, permissions: ActionCapabilities, instruction: String) throws {
         self.model = model; self.permissions = permissions
         codec = PolicyActionCodec(capabilities: model.configuration.capabilities)
-        self.instruction = MLXArray(ObservationPreprocessor.instruction(instruction), [1, 1, PolicyNetwork.instructionLength])
+        self.instruction = MLXArray(try ObservationPreprocessor.instruction(model.configuration.instructionConditioning ? instruction : ""),
+                                    [1, 1, PolicyNetwork.instructionLength])
     }
 
     func decide(scene: CapturedScene, state: InputState, previousAction: ComputerAction, elapsed: Double,

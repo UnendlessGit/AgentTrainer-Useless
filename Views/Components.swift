@@ -1,5 +1,18 @@
 import SwiftUI
 
+struct InstructionSizeHint: View {
+    var text: String
+    private var count: Int { text.utf8.count }
+    private var limit: Int { PolicyNetwork.instructionLength }
+    var body: some View {
+        Text(count > limit ? "\(count)/\(limit) UTF-8 bytes · shorten before training or running with task instructions"
+             : "\(count)/\(limit) UTF-8 bytes")
+            .font(.caption).foregroundStyle(count > limit ? Color.orange : Color.secondary)
+            .help("Spaces and punctuation count. Some characters use multiple bytes. Recording metadata preserves the complete text.")
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
 struct PageHeader<Actions: View>: View {
     let title: String
     let subtitle: String

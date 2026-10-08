@@ -60,6 +60,7 @@ struct RecordView: View {
                             VStack(alignment: .leading, spacing: 7) {
                                 Text("Task instruction · optional").font(.caption).foregroundStyle(.secondary)
                                 TextField("What are you demonstrating?", text: $session.recordingForm.instruction, axis: .vertical).lineLimit(2...4)
+                                InstructionSizeHint(text: session.recordingForm.instruction)
                             }
                         }
                         Surface(title: "Capture quality", symbol: "viewfinder") {

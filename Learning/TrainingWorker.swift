@@ -36,6 +36,7 @@ struct TrainingProgress: Sendable {
     var cpuPercent = 0.0
     var elapsedSeconds = 0.0
     var checkpoint: UUID?
+    var initialWeights: InitialWeights?
     var history: [LossPoint] = []
 }
 
@@ -85,6 +86,9 @@ enum TrainingWorker {
             try request.preferences.validate()
             try request.settings.validate()
             try request.model.configuration.validate()
+            if !request.resume && request.stage == .imitation && request.settings.startingWeights == .trained && !request.model.canRun {
+                throw DataIntegrityError.invalidData("This model has no compatible trained checkpoint. Choose pre-trained or new weights, or restore the trained configuration.")
+            }
             let estimate = request.model.configuration.estimatedWorkingSetBytes(batchSize: request.settings.batchSize)
             guard estimate < request.preferences.memoryLimitGB * 1_073_741_824 * 3 / 4 else {
                 throw DataIntegrityError.invalidData("This architecture and batch are estimated to exceed the selected memory budget. Reduce batch size or sequence length, or increase the MLX memory limit in Settings.")
@@ -105,6 +109,7 @@ enum TrainingWorker {
             let checkpoints = CheckpointStore(root: URL(fileURLWithPath: request.preferences.checkpointsPath))
             var epoch = 0, cursor = 0, step = 0
             var hidden: [MLXArray] = [], lastLoss: Float = 0, validationLoss: Float?, bestLoss: Float?
+            var initialWeights: InitialWeights? = .scratch
             if request.resume {
                 guard let (saved, directory) = try checkpoints.latest(modelID: request.model.id, stage: request.stage, configuration: request.model.configuration) else {
                     throw DataIntegrityError.invalidData("There is no resumable checkpoint for this model and stage.")
@@ -126,16 +131,27 @@ enum TrainingWorker {
                 lastLoss = saved.trainingLoss; validationLoss = saved.validationLoss; bestLoss = saved.bestValidationLoss
                 progress.actionEvaluation = saved.actionEvaluation
                 progress.checkpoint = saved.id
+                initialWeights = saved.initialWeights
                 guard epoch < request.settings.epochs else { throw DataIntegrityError.invalidData("This run already completed all epochs. Start a new run to train again.") }
-            } else if request.stage == .imitation && request.model.pretrainingCompatible {
-                guard let identifier = request.model.pretrainedCheckpoint, let id = UUID(uuidString: identifier) else {
-                    throw DataIntegrityError.invalidData("The assigned pre-training checkpoint identifier is invalid.")
+            } else if request.stage == .imitation {
+                let source: (String?, TrainingStage)?
+                switch request.settings.startingWeights {
+                case .automatic:
+                    source = request.model.pretrainingCompatible ? (request.model.pretrainedCheckpoint, .pretraining) : nil
+                case .trained: source = (request.model.trainedCheckpoint, .imitation)
+                case .scratch: source = nil
                 }
-                let (saved, directory) = try checkpoints.load(modelID: request.model.id, checkpointID: id, configuration: request.model.configuration)
-                guard saved.stage == .pretraining else { throw DataIntegrityError.invalidData("The assigned pre-training checkpoint has the wrong stage.") }
-                try restoreWeights(model, from: directory)
-                progress.message = "Continuing from pre-trained representations."
+                if let (identifier, stage) = source {
+                    guard let identifier, let id = UUID(uuidString: identifier) else {
+                        throw DataIntegrityError.invalidData("The starting checkpoint identifier is invalid.")
+                    }
+                    let (saved, directory) = try checkpoints.load(modelID: request.model.id, checkpointID: id, configuration: request.model.configuration)
+                    guard saved.stage == stage else { throw DataIntegrityError.invalidData("The starting checkpoint has the wrong training stage.") }
+                    try restoreWeights(model, from: directory)
+                    initialWeights = .checkpoint(id: id, stage: stage)
+                }
             }
+            progress.initialWeights = initialWeights
             eval(model)
             model.train(true)
             let stage = request.stage
@@ -177,6 +193,7 @@ enum TrainingWorker {
                     stage: request.stage, settings: request.settings, step: step, epoch: epoch, sampleCursor: cursor,
                     trainingLoss: lastLoss, validationLoss: cursor == 0 ? validationLoss : nil, bestValidationLoss: bestLoss)
                 var evaluatedManifest = manifest
+                evaluatedManifest.initialWeights = initialWeights
                 // Mid-epoch weights have changed since the last validation pass.
                 // Its scores remain useful in the live UI, but do not describe
                 // these saved weights. Only epoch-boundary saves own the scores.

@@ -92,6 +92,27 @@ final class TrainingPipelineTests: XCTestCase {
         XCTAssertEqual(sum(abs(imitation.arrays[BatchField.futurePixels.rawValue])).item(Float.self), 0)
     }
 
+    func testLongInstructionsAreRejectedOnlyWhenConditioningIsEnabled() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var item = try recording(root: root), c = configuration()
+        item.edits.instruction = String(repeating: "é", count: 49)
+        c.instructionConditioning = true
+        XCTAssertThrowsError(try PreparedDataset.prepare(items: [item], configuration: c, settings: TrainingSettings(), stage: .imitation,
+            root: root.appendingPathComponent("rejected"), checkCancellation: {}, progress: { _ in })) { error in
+            XCTAssertTrue(error.localizedDescription.contains(item.name))
+            XCTAssertTrue(error.localizedDescription.contains("98 UTF-8 bytes"))
+        }
+        XCTAssertThrowsError(try PolicyRunner(model: PolicyNetwork(configuration: c), permissions: c.capabilities, instruction: item.instruction))
+        c.instructionConditioning = false
+        let dataset = try PreparedDataset.prepare(items: [item], configuration: c, settings: TrainingSettings(), stage: .imitation,
+            root: root.appendingPathComponent("accepted"), checkCancellation: {}, progress: { _ in })
+        let batch = try TrainingBatch.load(plan: SequenceBatchPlan(recordings: dataset.training, chunk: 0), configuration: c,
+            stage: .imitation, checkCancellation: {})
+        XCTAssertEqual(sum(batch.arrays[BatchField.instructions.rawValue]).item(Int32.self), 0)
+        XCTAssertEqual(item.instruction, String(repeating: "é", count: 49), "The original instruction is preserved for editing.")
+    }
+
     func testPretrainingFingerprintIncludesTargetAtExactTrimEnd() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -279,5 +300,62 @@ final class TrainingPipelineTests: XCTestCase {
         XCTAssertEqual(trained.last?.phase, .complete, trained.last?.message ?? "Missing progress")
         XCTAssertTrue(trained.last?.loss?.isFinite ?? false)
         XCTAssertNil(trained.last?.validationLoss)
+        XCTAssertEqual(trained.last?.initialWeights, .checkpoint(id: checkpoint, stage: .pretraining))
+    }
+
+    func testFineTuningUsesTrainedWeightsWithFreshOptimizerAndChangedData() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = try recording(root: root)
+        var model = AIModel(name: "Fine-tuning pipeline"); model.configuration = configuration()
+        var settings = TrainingSettings(); settings.epochs = 1; settings.batchSize = 1; settings.validationFraction = 0
+        let preferences = AppPreferences.defaults(at: root), baseline = ProgressCollector()
+        TrainingWorker.run(TrainingRequest(model: model, settings: settings, stage: .imitation, items: [original],
+            preferences: preferences, resume: false), control: TrainingControl(), publish: baseline.append, checkpointSaved: { _ in })
+        XCTAssertEqual(baseline.last?.phase, .complete, baseline.last?.message ?? "Missing progress")
+        let store = CheckpointStore(root: URL(fileURLWithPath: preferences.checkpointsPath))
+        let parent = try XCTUnwrap(store.latest(modelID: model.id, stage: .imitation, configuration: model.configuration))
+        let originalPayload = try Data(contentsOf: parent.1.appendingPathComponent("weights.safetensors"))
+        model.trainedCheckpoint = parent.0.id.uuidString; model.trainedFingerprint = model.configuration.fingerprint
+        settings.startingWeights = .trained; settings.learningRate = 0.0001
+        let items = try [original, recording(root: root)], control = TrainingControl(), progress = ProgressCollector()
+        TrainingWorker.run(TrainingRequest(model: model, settings: settings, stage: .imitation, items: items,
+            preferences: preferences, resume: false), control: control, publish: { update in
+                progress.append(update)
+                if update.phase == .training && update.step == 1 { control.set(.pause) }
+            }, checkpointSaved: { _ in })
+        XCTAssertEqual(progress.last?.phase, .paused, progress.last?.message ?? "Missing progress")
+        let child = try XCTUnwrap(store.latest(modelID: model.id, stage: .imitation, configuration: model.configuration))
+        XCTAssertEqual(child.0.step, 1)
+        XCTAssertEqual(child.0.epoch, 0)
+        XCTAssertNotEqual(child.0.datasetFingerprint, parent.0.datasetFingerprint)
+        XCTAssertEqual(Set(child.0.trainingRecordingIDs), Set(items.map(\.id)))
+        XCTAssertEqual(child.0.initialWeights, .checkpoint(id: parent.0.id, stage: .imitation))
+        XCTAssertEqual(try Data(contentsOf: parent.1.appendingPathComponent("weights.safetensors")), originalPayload)
+
+        // Independently take the first update from the parent's weights. Matching
+        // every tensor proves initialization, fresh moments and reset memory.
+        let expected = PolicyNetwork(configuration: model.configuration)
+        try TrainingWorker.restoreWeights(expected, from: parent.1)
+        expected.train(true)
+        let dataset = try PreparedDataset.prepare(items: items, configuration: model.configuration, settings: settings,
+            stage: .imitation, root: root.appendingPathComponent("expected"), checkCancellation: {}, progress: { _ in })
+        let schedule = SequenceSchedule(recordings: dataset.training, batchSize: settings.batchSize,
+            sequenceLength: model.configuration.sequenceLength, seed: settings.seed)
+        let batch = try TrainingBatch.load(plan: XCTUnwrap(schedule.plan(at: 0)), configuration: model.configuration,
+            stage: .imitation, checkCancellation: {})
+        let gradient = valueAndGrad(model: expected) { model, arrays in PolicyLoss.values(model, arrays, stage: .imitation) }
+        let (_, gradients) = gradient(expected, batch.arrays)
+        let optimizer = ResumableAdamW(learningRate: settings.learningRate, weightDecay: settings.weightDecay)
+        _ = optimizer.update(model: expected, gradients: gradients, clip: settings.gradientClip)
+        let actual = try MLX.loadArrays(url: child.1.appendingPathComponent("weights.safetensors"))
+        for (key, tensor) in expected.parameters().flattened() {
+            XCTAssertLessThanOrEqual(max(abs(tensor - (try XCTUnwrap(actual[key])))).item(Float.self), 1e-6, key)
+        }
+        let savedOptimizer = try MLX.loadArrays(url: child.1.appendingPathComponent("optimizer.safetensors"))
+        XCTAssertEqual(savedOptimizer["optimizer_step"]?.item(Int.self), 1)
+        for (key, tensor) in optimizer.arrays() where key != "optimizer_step" {
+            XCTAssertLessThanOrEqual(max(abs(tensor - (try XCTUnwrap(savedOptimizer[key])))).item(Float.self), 1e-6, key)
+        }
     }
 }

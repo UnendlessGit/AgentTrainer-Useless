@@ -189,15 +189,15 @@ final class PolicyNetworkTests: XCTestCase {
         XCTAssertEqual(first.step, resumed.step)
     }
 
-    func testInstructionOrderChangesPolicyConditioning() {
+    func testInstructionOrderChangesPolicyConditioning() throws {
         var c = configuration(.recurrent); c.instructionConditioning = true
         let model = PolicyNetwork(configuration: c)
-        func predict(_ text: String) -> MLXArray {
+        func predict(_ text: String) throws -> MLXArray {
             model(images: MLXArray.zeros([1, 1, 128, 128, 3]), crops: nil,
                 context: MLXArray.zeros([1, 1, PolicyNetwork.contextSize]), previousActions: MLXArray.zeros([1, 1], type: Int32.self),
-                instructions: MLXArray(ObservationPreprocessor.instruction(text), [1, 1, PolicyNetwork.instructionLength]),
+                instructions: MLXArray(try ObservationPreprocessor.instruction(text), [1, 1, PolicyNetwork.instructionLength]),
                 dynamicsActions: MLXArray.zeros([1, 1], type: Int32.self), dynamicsArguments: MLXArray.zeros([1, 1, 2])).actionLogits
         }
-        XCTAssertGreaterThan(max(abs(predict("open then close") - predict("close then open"))).item(Float.self), 1e-6)
+        XCTAssertGreaterThan(try max(abs(predict("open then close") - predict("close then open"))).item(Float.self), 1e-6)
     }
 }

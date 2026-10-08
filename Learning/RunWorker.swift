@@ -38,7 +38,7 @@ enum RunWorker {
             model.train(false); eval(model)
             MLXRandom.seed(42)
             let permissions = configuration.capabilities.intersecting(request.configuration.permissions)
-            let runner = PolicyRunner(model: model, permissions: permissions, instruction: request.configuration.instruction)
+            let runner = try PolicyRunner(model: model, permissions: permissions, instruction: request.configuration.instruction)
             let start = clock.now, deadline = start + UInt64(request.configuration.maximumRunSeconds) * 1_000_000_000
             started = start
             var previous: ComputerAction = .wait(seconds: 0), previousTime = start, lastPublish = start

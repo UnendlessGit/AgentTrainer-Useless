@@ -101,6 +101,10 @@ struct PreparedDataset: Sendable {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         for item in items.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
             try checkCancellation()
+            if configuration.instructionConditioning {
+                do { try ObservationPreprocessor.validateInstruction(item.instruction) }
+                catch { throw DataIntegrityError.invalidData("“\(item.name)”: \(error.localizedDescription) Edit its instruction in Library.") }
+            }
             progress("Preparing \(item.name)")
             fingerprint.update(data: Data(item.id.uuidString.utf8))
             fingerprint.update(data: try encoder.encode(item.edits))

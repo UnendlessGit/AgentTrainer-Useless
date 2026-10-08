@@ -52,7 +52,7 @@ struct TrainingBatch {
                     previousAction: row.previousAction, elapsed: row.elapsedSincePreviousAction,
                     sourceAge: Double(row.decisionTime - min(row.decisionTime, observation.sourceTimeNanoseconds)) / 1e9)
                 previous.append(Int32(codec.token(for: row.previousAction) ?? codec.count))
-                instructions += ObservationPreprocessor.instruction(row.instruction)
+                instructions += try ObservationPreprocessor.instruction(c.instructionConditioning ? row.instruction : "")
                 guard let token = codec.token(for: row.targetAction) else { throw DataIntegrityError.invalidData("An indexed action is incompatible with this model.") }
                 actions.append(Int32(token)); masks += codec.mask(state: row.state, capabilities: c.capabilities)
                 let (x, y) = codec.arguments(for: row.targetAction, bounds: observation.globalBounds)

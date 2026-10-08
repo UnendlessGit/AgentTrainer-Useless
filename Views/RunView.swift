@@ -5,6 +5,9 @@ struct RunView: View {
     @State private var showKeys = false
     private var runner: RunCoordinator { session.runner }
     private var model: AIModel? { session.store.models.first { $0.id == runner.configuration.modelID } }
+    private var instructionFits: Bool {
+        model?.configuration.instructionConditioning != true || runner.configuration.instruction.utf8.count <= PolicyNetwork.instructionLength
+    }
 
     var body: some View {
         @Bindable var runner = runner
@@ -17,7 +20,7 @@ struct RunView: View {
                     } else {
                         Button { Task { await runner.start() } } label: { Label("Start run", systemImage: "play.fill") }
                             .buttonStyle(.borderedProminent)
-                            .disabled(model?.canRun != true || !session.store.activeOperations.isEmpty || session.store.migrating || runner.catalog.loading)
+                            .disabled(model?.canRun != true || !instructionFits || !session.store.activeOperations.isEmpty || session.store.migrating || runner.catalog.loading)
                     }
                 }
                 HStack(alignment: .top, spacing: 22) {
@@ -83,6 +86,7 @@ struct RunView: View {
                                 Text("Task instruction").font(.caption).foregroundStyle(.secondary)
                                 TextField("Task instruction", text: $runner.configuration.instruction, axis: .vertical).lineLimit(2...4)
                                     .disabled(model?.configuration.instructionConditioning != true)
+                                if model?.configuration.instructionConditioning == true { InstructionSizeHint(text: runner.configuration.instruction) }
                                 if let model, !model.configuration.instructionConditioning {
                                     Text("This model was trained without task instructions.").font(.caption).foregroundStyle(.secondary)
                                 }

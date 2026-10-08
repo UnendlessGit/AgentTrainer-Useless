@@ -60,6 +60,11 @@ struct TrainView: View {
                                 Stepper("Run budget: \(trainer.settings.maximumRunMinutes) min", value: $trainer.settings.maximumRunMinutes, in: 1...30)
                             }
                         }.disabled(trainer.isBusy)
+                        Picker("Starting weights for Train", selection: $trainer.settings.startingWeights) {
+                            ForEach(TrainingInitialization.allCases) { Text($0.rawValue).tag($0) }
+                        }.disabled(trainer.isBusy)
+                        Text("Latest trained weights let you add demonstrations or change training settings with a fresh optimizer. Resume restores an interrupted run exactly. Pre-train always starts from new weights.")
+                            .font(.caption).foregroundStyle(.secondary)
                         Toggle("Balance input choices against waits", isOn: $trainer.settings.balancesInputChoices).disabled(trainer.isBusy)
                         Text("Keeps the recorded wait/input frequency while giving rarer input choices more training weight. Applies to imitation learning.")
                             .font(.caption).foregroundStyle(.secondary)
@@ -85,12 +90,25 @@ struct TrainView: View {
             HStack {
                 Button(stage == .pretraining ? "Pre-train" : "Train") {
                     if let model { trainer.start(model: model, stage: stage) }
-                }.buttonStyle(.borderedProminent).disabled(model == nil || count == 0 || !store.activeOperations.isEmpty || store.migrating)
+                }.buttonStyle(.borderedProminent).disabled(model == nil || count == 0 || !store.activeOperations.isEmpty || store.migrating
+                    || (stage == .imitation && trainer.settings.startingWeights == .trained && model?.canRun != true))
                 Button("Resume") { if let model { trainer.resume(model: model, stage: stage) } }
                     .disabled(model == nil || !store.activeOperations.isEmpty || store.migrating || (stage == .pretraining ? model?.pretrainedCheckpoint : model?.trainedCheckpoint) == nil)
             }
-            Text(stage == .imitation && model?.pretrainingCompatible == true ? "New training starts from your pre-trained checkpoint." : "Starts from new weights; previous checkpoints are preserved.")
+            Text(initializationDescription(for: stage))
                 .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func initializationDescription(for stage: TrainingStage) -> String {
+        guard stage == .imitation else { return "Starts from new weights; previous checkpoints are preserved." }
+        switch trainer.settings.startingWeights {
+        case .automatic:
+            return model?.pretrainingCompatible == true ? "New training starts from your pre-trained checkpoint." : "Starts from new weights; previous checkpoints are preserved."
+        case .trained:
+            return model?.canRun == true ? "Fine-tunes the latest trained checkpoint with the selected data and a fresh optimizer."
+                : "A compatible trained checkpoint is required. Choose another starting-weight option below."
+        case .scratch: return "Starts from new random weights; previous checkpoints are preserved."
         }
     }
 
@@ -174,6 +192,7 @@ struct TrainView: View {
             }
             Text(p.checkpoint.map { "Latest checkpoint: \($0.uuidString.prefix(8)) · weights, optimizer and memory saved" } ?? "No checkpoint written yet.")
                 .font(.caption).foregroundStyle(.secondary)
+            if let initialWeights = p.initialWeights { Text(initialWeights.label).font(.caption).foregroundStyle(.secondary) }
             Text("Metal acceleration is active during tensor work. macOS does not expose a reliable per-app GPU utilization percentage here.")
                 .font(.caption).foregroundStyle(.secondary)
             Text("App footprint includes unified-memory allocations. MLX active and cache memory are components of that total, not additional usage.")

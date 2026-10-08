@@ -12,8 +12,8 @@ final class PolicyRunnerTests: XCTestCase {
             c.sequenceLength = 4; c.memory = architecture; c.detailCrop = false; c.instructionConditioning = false
             c.capabilities.keys = [0]; c.capabilities.buttons = []; c.capabilities.scrolling = false; c.capabilities.pointer = false
             let model = PolicyNetwork(configuration: c)
-            let runner = PolicyRunner(model: model, permissions: c.capabilities, instruction: "")
-            let reference = PolicyRunner(model: model, permissions: c.capabilities, instruction: "")
+            let runner = try PolicyRunner(model: model, permissions: c.capabilities, instruction: String(repeating: "a", count: 200))
+            let reference = try PolicyRunner(model: model, permissions: c.capabilities, instruction: "")
             let provider = try XCTUnwrap(CGDataProvider(data: Data([255, 20, 40, 255]) as CFData))
             let image = try XCTUnwrap(CGImage(width: 1, height: 1, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 4,
                 space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
