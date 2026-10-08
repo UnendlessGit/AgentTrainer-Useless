@@ -175,9 +175,12 @@ enum TrainingWorker {
                     configurationFingerprint: request.model.configuration.fingerprint, datasetFingerprint: dataset.fingerprint,
                     trainingRecordingIDs: dataset.training.map { $0.item.id }, validationRecordingIDs: dataset.validation.map { $0.item.id },
                     stage: request.stage, settings: request.settings, step: step, epoch: epoch, sampleCursor: cursor,
-                    trainingLoss: lastLoss, validationLoss: validationLoss, bestValidationLoss: bestLoss)
+                    trainingLoss: lastLoss, validationLoss: cursor == 0 ? validationLoss : nil, bestValidationLoss: bestLoss)
                 var evaluatedManifest = manifest
-                evaluatedManifest.actionEvaluation = progress.actionEvaluation
+                // Mid-epoch weights have changed since the last validation pass.
+                // Its scores remain useful in the live UI, but do not describe
+                // these saved weights. Only epoch-boundary saves own the scores.
+                evaluatedManifest.actionEvaluation = cursor == 0 ? progress.actionEvaluation : nil
                 let saved = try autoreleasepool {
                     try checkpoints.save(evaluatedManifest, isBest: isBest) { directory in
                         try MLX.save(arrays: Dictionary(uniqueKeysWithValues: model.parameters().flattened()), url: directory.appendingPathComponent("weights.safetensors"))

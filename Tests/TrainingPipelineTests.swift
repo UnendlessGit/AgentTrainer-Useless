@@ -95,6 +95,35 @@ final class TrainingPipelineTests: XCTestCase {
         try checkWorkerPauseResume(architecture: .recurrent)
     }
 
+    func testMidEpochCheckpointDoesNotInheritValidationOfEarlierWeights() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let items = try [recording(root: root), recording(root: root)]
+        var model = AIModel(name: "Checkpoint validation provenance"); model.configuration = configuration()
+        var settings = TrainingSettings(); settings.epochs = 2; settings.batchSize = 1; settings.checkpointInterval = 100
+        let preferences = AppPreferences.defaults(at: root), progress = ProgressCollector(), control = TrainingControl()
+        TrainingWorker.run(TrainingRequest(model: model, settings: settings, stage: .imitation, items: items,
+            preferences: preferences, resume: false), control: control, publish: { update in
+                progress.append(update)
+                if update.phase == .training && update.epoch == 1 && update.cursor > 0 { control.set(.pause) }
+            }, checkpointSaved: { _ in })
+        XCTAssertEqual(progress.last?.phase, .paused, progress.last?.message ?? "Missing progress")
+        // The UI can still show the last completed validation while training.
+        XCTAssertNotNil(progress.last?.validationLoss)
+        let store = CheckpointStore(root: URL(fileURLWithPath: preferences.checkpointsPath))
+        let latest = try XCTUnwrap(store.latest(modelID: model.id, stage: .imitation, configuration: model.configuration)).0
+        XCTAssertGreaterThan(latest.sampleCursor, 0)
+        XCTAssertNil(latest.validationLoss)
+        XCTAssertNil(latest.actionEvaluation)
+        XCTAssertNotNil(latest.bestValidationLoss)
+        let best = try store.inference(modelID: model.id, latestID: latest.id,
+            configuration: model.configuration, preferBest: true).0
+        XCTAssertEqual(best.sampleCursor, 0)
+        XCTAssertNotNil(best.validationLoss)
+        XCTAssertEqual(best.actionEvaluation?.total, 11)
+        XCTAssertLessThan(best.step, latest.step)
+    }
+
     func testAttentionWorkerRestoresHistoryAcrossPauseResume() throws {
         try checkWorkerPauseResume(architecture: .attention)
     }
