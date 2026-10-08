@@ -19,7 +19,11 @@ final class TrainingCoordinator {
             do {
                 settings = try AtomicFile.decode(TrainingSettings.self, from: url)
                 if settings.balancedActionFrequency == nil { settings.balancesActionFrequency = true }
-                if settings.actionBalanceVersion == nil { settings.actionBalanceVersion = 2 }
+                if (settings.actionBalanceVersion ?? 1) < 3 { settings.actionBalanceVersion = 3 }
+                if (settings.sequenceScheduleVersion ?? 1) < 3 { settings.sequenceScheduleVersion = 3 }
+                if settings.balancedGradientClipping == nil { settings.balancesGradientClipping = true }
+                if settings.matchedControlCheckpoints == nil { settings.prefersMatchedControlCheckpoints = true }
+                if settings.cursorIndependentKeys == nil { settings.cursorIndependentKeys = true }
                 try settings.validate()
             }
             catch { settings = TrainingSettings(); store.error = "Training settings could not be restored: \(error.localizedDescription)" }
@@ -42,6 +46,13 @@ final class TrainingCoordinator {
         guard !isBusy else { return }
         guard store.canAccessWorkspace else { return }
         guard !store.migrating, store.activeOperations.isEmpty else { store.error = "Finish the active operation before training."; return }
+        if !resume {
+            settings.actionBalanceVersion = 3
+            settings.sequenceScheduleVersion = 3
+            settings.balancesGradientClipping = true
+            settings.prefersMatchedControlCheckpoints = true
+            settings.cursorIndependentKeys = true
+        }
         do {
             try store.requireWritable()
             try settings.validate()

@@ -28,7 +28,8 @@ enum TrainingExampleBuilder {
     /// Merge both journals in timestamp order. Input state is reconstructed from
     /// raw transitions (not from possibly delayed callback snapshots). Every
     /// sub-frame press/release remains a separate autoregressive training target.
-    static func stream(item: RecordingItem, visit: (TrainingExample) throws -> Void) throws {
+    static func stream(item: RecordingItem, ignoringPointerMovement: Bool = false, ignoringKeyRepeats: Bool = false,
+                       visit: (TrainingExample) throws -> Void) throws {
         guard item.eligible else { throw DataIntegrityError.invalidData("“\(item.name)” is not eligible for training.") }
         guard item.manifest.schemaVersion == 1, item.manifest.actionSchemaVersion == ComputerAction.schemaVersion else {
             throw DataIntegrityError.invalidData("The recording's observation/action version is incompatible with this training pipeline.")
@@ -45,13 +46,23 @@ enum TrainingExampleBuilder {
         let trim = try item.edits.timeRange(duration: item.manifest.duration)
         let trimStart = trim.start, trimEnd = trim.end
 
+        func ignored(_ input: InputTransition) -> Bool {
+            switch input.learningAction {
+            case .pointer, .relativePointer: return ignoringPointerMovement
+            case .keyRepeat: return ignoringKeyRepeats
+            default: return false
+            }
+        }
+
         func consume(_ input: InputTransition) throws {
             guard input.timeNanoseconds >= lastEventTime else { throw DataIntegrityError.invalidTimeline }
             lastEventTime = input.timeNanoseconds
             state.apply(input.action)
             if let x = input.cursorX, let y = input.cursorY { state.cursorX = x; state.cursorY = y }
-            previousAction = input.learningAction
-            previousActionTime = input.timeNanoseconds
+            if !ignored(input) {
+                previousAction = input.learningAction
+                previousActionTime = input.timeNanoseconds
+            }
             event = try events.next()
         }
 
@@ -70,7 +81,7 @@ enum TrainingExampleBuilder {
             var decisionTime = max(observation.timeNanoseconds, previousActionTime)
             var emitted = false
             while let input = event, input.timeNanoseconds <= intervalEnd {
-                if input.timeNanoseconds >= trimStart && observation.timeNanoseconds >= trimStart {
+                if !ignored(input), input.timeNanoseconds >= trimStart && observation.timeNanoseconds >= trimStart {
                     try visit(TrainingExample(recordingID: item.id, observation: observation, state: state,
                         previousAction: previousAction, decisionTime: decisionTime,
                         elapsedSincePreviousAction: Double(decisionTime - min(decisionTime, previousActionTime)) / 1e9,

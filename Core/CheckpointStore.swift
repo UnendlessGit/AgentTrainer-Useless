@@ -108,6 +108,12 @@ struct CheckpointStore: Sendable {
                 && best.settings.balancesInputChoices == latest.settings.balancesInputChoices
                 && best.settings.balancesActionFrequency == latest.settings.balancesActionFrequency
                 && best.settings.actionBalanceVersion == latest.settings.actionBalanceVersion
+                && best.settings.balancesGradientClipping == latest.settings.balancesGradientClipping
+                && best.settings.prefersMatchedControlCheckpoints == latest.settings.prefersMatchedControlCheckpoints
+                && best.settings.sequenceScheduleVersion == latest.settings.sequenceScheduleVersion
+                && best.settings.ignoresPointerMovement == latest.settings.ignoresPointerMovement
+                && best.settings.usesCursorIndependentKeys == latest.settings.usesCursorIndependentKeys
+                && best.settings.ignoresKeyRepeats == latest.settings.ignoresKeyRepeats
                 && best.trainingRunID == latest.trainingRunID {
                 selected = best.id
             }

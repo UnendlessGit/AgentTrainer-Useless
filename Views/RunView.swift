@@ -5,6 +5,9 @@ struct RunView: View {
     @State private var showKeys = false
     @State private var checkpointSummary: String?
     @State private var checkpointWarning: String?
+    @State private var checkpointIgnoresPointer = false
+    @State private var checkpointIgnoresRepeats = false
+    @State private var checkpointPrefersMatchedControl = false
     private var runner: RunCoordinator { session.runner }
     private var model: AIModel? { session.store.models.first { $0.id == runner.configuration.modelID } }
     private var instructionFits: Bool {
@@ -93,15 +96,16 @@ struct RunView: View {
                                     Text("This model was trained without task instructions.").font(.caption).foregroundStyle(.secondary)
                                 }
                             }
-                            Toggle("Use checkpoint with lowest validation loss", isOn: $runner.configuration.useBestCheckpoint)
-                            if let checkpointSummary { Text(checkpointSummary).font(.caption).foregroundStyle(.secondary) }
+                            Toggle("Use validation-selected checkpoint", isOn: $runner.configuration.useBestCheckpoint)
+                            if let checkpointSummary { Text(checkpointSummary).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
                             if let checkpointWarning {
-                                Label(checkpointWarning, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                                Label(checkpointWarning, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
                             }
                             Text(runner.configuration.useBestCheckpoint
-                                 ? "Selected by loss on recorded history. Uses the latest checkpoint if none matches this training run."
-                                 : "Uses the latest training checkpoint. Compare live task completion with the checkpoint selected by validation loss.")
-                                .font(.caption).foregroundStyle(.secondary)
+                                 ? (checkpointPrefersMatchedControl ? "Prefers checkpoints that match demonstrated presses, then lowest validation loss. Recorded-history scores do not establish live task competence."
+                                    : "Selected by loss on recorded history. Uses the latest checkpoint if none matches this training run.")
+                                 : "Uses the latest training checkpoint. Compare live task completion with the validation-selected checkpoint.")
+                                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                             Toggle("Choose the most likely action", isOn: $runner.configuration.deterministic)
                             if !runner.configuration.deterministic {
                                 Slider(value: $runner.configuration.temperature, in: 0.05...2) { Text("Sampling temperature") }
@@ -111,18 +115,29 @@ struct RunView: View {
                         Surface(title: "Control limits", symbol: "hand.raised") {
                             Toggle("Stop on human input", isOn: $runner.configuration.stopOnHumanInput)
                             if !runner.configuration.stopOnHumanInput {
-                                Text("The agent waits while you hold input. Conflicting input stops the run while the agent holds a key or button.").font(.caption).foregroundStyle(.secondary)
+                                Text("The agent waits while you hold input. Conflicting input stops the run while the agent holds a key or button.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                             }
                             Picker("Run duration", selection: $runner.configuration.maximumRunSeconds) {
                                 ForEach([15, 30, 60, 120, 300, 600], id: \.self) { Text("\($0) seconds").tag($0) }
                             }
                             Stepper("Maximum hold: \(runner.configuration.maximumHoldSeconds)s", value: $runner.configuration.maximumHoldSeconds, in: 1...60)
-                            Toggle("Move pointer", isOn: $runner.configuration.permissions.pointer)
-                            Toggle("Relative pointer movement", isOn: $runner.configuration.permissions.relativePointer)
+                            Toggle("Move pointer", isOn: Binding(get: { !checkpointIgnoresPointer && runner.configuration.permissions.pointer },
+                                set: { runner.configuration.permissions.pointer = $0 })).disabled(checkpointIgnoresPointer)
+                            Toggle("Relative pointer movement", isOn: Binding(get: { !checkpointIgnoresPointer && runner.configuration.permissions.relativePointer },
+                                set: { runner.configuration.permissions.relativePointer = $0 })).disabled(checkpointIgnoresPointer)
+                            if checkpointIgnoresPointer {
+                                Text("Pointer movement was excluded from this checkpoint's training and is disabled in Run.")
+                                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            }
                             Toggle("Scrolling", isOn: $runner.configuration.permissions.scrolling)
                             Toggle("Dragging", isOn: $runner.configuration.permissions.dragging)
                             Toggle("Key combinations", isOn: $runner.configuration.permissions.chords)
-                            Toggle("Repeated key events while held", isOn: $runner.configuration.permissions.repeatsKeys)
+                            Toggle("Repeated key events while held", isOn: Binding(get: { !checkpointIgnoresRepeats && runner.configuration.permissions.repeatsKeys },
+                                set: { runner.configuration.permissions.repeatsKeys = $0 })).disabled(checkpointIgnoresRepeats)
+                            if checkpointIgnoresRepeats {
+                                Text("Autorepeat was excluded from this checkpoint. Keys stay held until release; repeated events are disabled.")
+                                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            }
                             ForEach(ActionCapabilities.supportedButtons, id: \.self) { button in
                                 Toggle(KeyNames.button(button), isOn: Binding(get: { runner.configuration.permissions.buttons.contains(button) }, set: {
                                     if $0 { runner.configuration.permissions.buttons.insert(button) } else { runner.configuration.permissions.buttons.remove(button) }
@@ -156,7 +171,8 @@ struct RunView: View {
         }
         .onDisappear { runner.saveConfiguration() }
         .task(id: "\(model?.id.uuidString ?? ""): \(model?.trainedCheckpoint ?? ""): \(runner.configuration.useBestCheckpoint)") {
-            checkpointSummary = nil; checkpointWarning = nil
+            checkpointSummary = nil; checkpointWarning = nil; checkpointIgnoresPointer = false; checkpointIgnoresRepeats = false
+            checkpointPrefersMatchedControl = false
             guard let model, let id = model.trainedCheckpoint.flatMap(UUID.init(uuidString:)) else { return }
             let checkpoints = CheckpointStore(root: URL(fileURLWithPath: session.store.preferences.checkpointsPath))
             let preferBest = runner.configuration.useBestCheckpoint
@@ -167,6 +183,9 @@ struct RunView: View {
                 try Task.checkCancellation()
                 checkpointSummary = "Checkpoint \(metadata.id.uuidString.prefix(8)) · epoch \(metadata.epoch) · \(metadata.settings.balancesActionFrequency ? "balanced actions" : "legacy action frequency")"
                 checkpointWarning = metadata.actionEvaluation?.collapseWarning
+                checkpointIgnoresPointer = metadata.settings.ignoresPointerMovement
+                checkpointIgnoresRepeats = metadata.settings.ignoresKeyRepeats
+                checkpointPrefersMatchedControl = metadata.settings.prefersMatchedControlCheckpoints
             } catch is CancellationError { }
             catch { checkpointWarning = error.localizedDescription }
         }

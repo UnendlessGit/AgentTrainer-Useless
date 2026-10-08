@@ -52,6 +52,7 @@ struct TrainView: View {
                                     Text("Gradient clip").font(.caption).foregroundStyle(.secondary)
                                     TextField("Gradient clip", value: $trainer.settings.gradientClip, format: .number)
                                         .accessibilityLabel("Gradient clip").accessibilityIdentifier("training.gradientClip")
+                                        .help("Balanced runs apply this limit after normalizing the batch's sample importance, preserving rare-input weights.")
                                 }
                                 Stepper("Checkpoint every \(trainer.settings.checkpointInterval) steps", value: $trainer.settings.checkpointInterval, in: 1...1000)
                                 Picker("Held-out recordings", selection: $trainer.settings.validationFraction) {
@@ -66,14 +67,20 @@ struct TrainView: View {
                         Text("Latest trained weights let you add demonstrations or change training settings with a fresh optimizer. Resume restores an interrupted run exactly. Pre-train always starts from new weights.")
                             .font(.caption).foregroundStyle(.secondary)
                         Toggle("Balance actions and waits", isOn: $trainer.settings.balancesActionFrequency).disabled(trainer.isBusy)
-                        Text("Recommended for sparse inputs and held keys. Balances actions and waits separately while idle and while holding controls, then learns which input to use. Waiting never releases a held key.")
+                        Text("Recommended for sparse inputs and held keys. Balances waits and individual input choices within each recording and held state, so dense cursor movement cannot overwhelm rare key presses. Waiting never releases a held key.")
                             .font(.caption).foregroundStyle(.secondary)
                         if !trainer.settings.balancesActionFrequency {
                             Toggle("Strengthen input choices only (legacy)", isOn: $trainer.settings.balancesInputChoices).disabled(trainer.isBusy)
                             Text("Preserves the recorded wait/input frequency. Many idle frames can still lead to a policy that only waits.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                        Text("Validation uses separate recordings. With one recording, no validation score is reported. A run pauses at its time budget; Resume restores its data split, optimizer and memory.")
+                        Toggle("Ignore recorded pointer movement", isOn: $trainer.settings.ignoresPointerMovement).disabled(trainer.isBusy)
+                        Text("For tasks controlled only by keys. New imitation runs exclude cursor targets and cursor-centered features; these checkpoints also disable pointer movement in Run. Presses, holds, releases and original recordings stay intact; pre-training keeps every recorded action.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Toggle("Ignore key autorepeat", isOn: $trainer.settings.ignoresKeyRepeats).disabled(trainer.isBusy)
+                        Text("For games controlled by holding keys. Keeps initial presses, held state and releases, while excluding macOS repeat events from imitation targets and Run. Enable repeated input when your task needs held keys to type repeated characters. Original recordings and pre-training keep every event.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text("Validation uses separate recordings; one recording has no held-out score. Choose Train to apply new settings and training improvements. A run pauses at its time budget; Resume keeps its saved method, pointer filter, data split, optimizer and memory.")
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                 }.padding(30)
@@ -154,6 +161,10 @@ struct TrainView: View {
                 }.chartForegroundStyleScale(["Training": Color.blue, "Validation": Color.orange]).frame(height: 160)
             }
             if let evaluation = p.actionEvaluation {
+                if let epoch = p.evaluationEpoch {
+                    Text("Validation completed after epoch \(epoch). These scores describe that checkpoint.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 if let warning = evaluation.collapseWarning {
                     Label(warning, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
                 }
@@ -165,6 +176,10 @@ struct TrainView: View {
                 }
                 Text("\(evaluation.total.formatted()) held-out decisions, including \(evaluation.nonWaitTotal.formatted()) non-wait actions. Evaluation uses recorded history; use Run to verify closed-loop behavior.")
                     .font(.caption).foregroundStyle(.secondary)
+                if let total = evaluation.initialPressTotal, total > 0, let correct = evaluation.initialPressCorrect {
+                    Text("Initial presses from idle: \(correct) / \(total) matched. Chords and releases alone cannot initiate control.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 if let rows = evaluation.actionBreakdown {
                     DisclosureGroup("Validation by action") {
                         Grid(alignment: .leading, horizontalSpacing: 30, verticalSpacing: 8) {
@@ -195,6 +210,10 @@ struct TrainView: View {
             if p.stage == .imitation && p.trainingExamples > 0 {
                 Text("Training data: \(p.trainingNonWaitExamples.formatted()) input transitions and \((p.trainingExamples - p.trainingNonWaitExamples).formatted()) waits.")
                     .font(.caption).foregroundStyle(.secondary)
+                if p.trainingPointerExamples > 100, p.trainingPointerExamples > p.trainingNonWaitExamples / 2 {
+                    Label("Pointer movement accounts for \(Int(Double(p.trainingPointerExamples) / Double(p.trainingNonWaitExamples) * 100))% of training inputs. If these movements are incidental, enable Ignore recorded pointer movement for a new run.", systemImage: "cursorarrow.motionlines")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 if p.trainingNonWaitExamples == 0 {
                     Text("These recordings only teach waiting. Add action demonstrations to teach other behavior.").font(.caption).foregroundStyle(.orange)
                 }

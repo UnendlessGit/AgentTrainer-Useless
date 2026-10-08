@@ -110,11 +110,19 @@ extension CheckpointStoreTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = CheckpointStore(root: root), modelID = UUID(), c = PolicyConfiguration(), run = UUID()
-        func save(runID: UUID, balanced: Bool, best: Bool) throws -> UUID {
+        func save(runID: UUID, balanced: Bool, best: Bool, scheduleVersion: Int? = 3, ignorePointer: Bool = false,
+                  weightedClip: Bool = true, ignoreRepeats: Bool = false, matchedControl: Bool = true,
+                  cursorIndependent: Bool? = true) throws -> UUID {
             var metadata = CheckpointManifest(modelID: modelID, configuration: c, configurationFingerprint: c.fingerprint,
                 datasetFingerprint: "same data", trainingRecordingIDs: [], validationRecordingIDs: [], stage: .imitation,
                 settings: TrainingSettings(), step: 1, epoch: 1, sampleCursor: 0, trainingLoss: 1)
             metadata.trainingRunID = runID; metadata.settings.balancesActionFrequency = balanced
+            metadata.settings.sequenceScheduleVersion = scheduleVersion
+            metadata.settings.ignoresPointerMovement = ignorePointer
+            metadata.settings.balancesGradientClipping = weightedClip
+            metadata.settings.ignoresKeyRepeats = ignoreRepeats
+            metadata.settings.prefersMatchedControlCheckpoints = matchedControl
+            metadata.settings.cursorIndependentKeys = cursorIndependent
             return try store.save(metadata, isBest: best) { url in
                 try Data([1]).write(to: url.appendingPathComponent("weights.safetensors"))
                 try Data([2]).write(to: url.appendingPathComponent("optimizer.safetensors"))
@@ -127,5 +135,20 @@ extension CheckpointStoreTests {
         XCTAssertEqual(try store.inference(modelID: modelID, latestID: newRun, configuration: c, preferBest: true).0.id, newRun)
         let differentLoss = try save(runID: run, balanced: false, best: false)
         XCTAssertEqual(try store.inference(modelID: modelID, latestID: differentLoss, configuration: c, preferBest: true).0.id, differentLoss)
+        for version in [nil, 2] as [Int?] {
+            let differentSchedule = try save(runID: run, balanced: true, best: false, scheduleVersion: version)
+            XCTAssertEqual(try store.inference(modelID: modelID, latestID: differentSchedule, configuration: c, preferBest: true).0.id, differentSchedule)
+        }
+        let differentFilter = try save(runID: run, balanced: true, best: false, ignorePointer: true)
+        XCTAssertEqual(try store.inference(modelID: modelID, latestID: differentFilter, configuration: c, preferBest: true).0.id, differentFilter)
+        let differentClip = try save(runID: run, balanced: true, best: false, weightedClip: false)
+        XCTAssertEqual(try store.inference(modelID: modelID, latestID: differentClip, configuration: c, preferBest: true).0.id, differentClip)
+        let differentRepeats = try save(runID: run, balanced: true, best: false, ignoreRepeats: true)
+        XCTAssertEqual(try store.inference(modelID: modelID, latestID: differentRepeats, configuration: c, preferBest: true).0.id, differentRepeats)
+        let differentSelection = try save(runID: run, balanced: true, best: false, matchedControl: false)
+        XCTAssertEqual(try store.inference(modelID: modelID, latestID: differentSelection, configuration: c, preferBest: true).0.id, differentSelection)
+        _ = try save(runID: run, balanced: true, best: true, ignorePointer: true)
+        let differentCursor = try save(runID: run, balanced: true, best: false, ignorePointer: true, cursorIndependent: nil)
+        XCTAssertEqual(try store.inference(modelID: modelID, latestID: differentCursor, configuration: c, preferBest: true).0.id, differentCursor)
     }
 }

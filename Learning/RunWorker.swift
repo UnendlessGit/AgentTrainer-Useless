@@ -37,9 +37,11 @@ enum RunWorker {
             try TrainingWorker.restoreWeights(model, from: directory)
             model.train(false); eval(model)
             MLXRandom.seed(42)
-            let permissions = configuration.capabilities.intersecting(request.configuration.permissions)
+            let permissions = checkpoint.settings.imitationCapabilities(configuration.capabilities)
+                .intersecting(request.configuration.permissions)
             let runner = try PolicyRunner(model: model, permissions: permissions, instruction: request.configuration.instruction,
-                                          hierarchical: checkpoint.settings.balancesActionFrequency)
+                                          hierarchical: checkpoint.settings.balancesActionFrequency,
+                                          cursorIndependent: checkpoint.settings.usesCursorIndependentKeys)
             let start = clock.now, deadline = start + UInt64(request.configuration.maximumRunSeconds) * 1_000_000_000
             started = start
             var previous: ComputerAction = .wait(seconds: 0), previousTime = start, lastPublish = start

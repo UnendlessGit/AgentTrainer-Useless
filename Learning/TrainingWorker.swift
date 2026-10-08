@@ -27,6 +27,8 @@ struct TrainingProgress: Sendable {
     var loss: Float?
     var validationLoss: Float?
     var actionEvaluation: ActionEvaluation?
+    var evaluationEpoch: Int?
+    var trainingPointerExamples = 0
     var gradientNorm: Float?
     var learningRate: Float = 0
     var stepsPerSecond = 0.0
@@ -103,12 +105,16 @@ enum TrainingWorker {
             progress.trainingNonWaitExamples = dataset.nonWaitExampleCount
             progress.validationRecordings = dataset.validation.count
             progress.excludedOutsideTarget = dataset.excludedOutsideTarget
+            let pointerToken = PolicyActionCodec(capabilities: request.model.configuration.capabilities).token(for: .pointer(x: 0, y: 0))
+            progress.trainingPointerExamples = pointerToken.map { token in dataset.stateFrequencies.reduce(0) { $0 + ($1.actionCounts[token] ?? 0) } } ?? 0
             MLXRandom.seed(request.settings.seed)
             let model = PolicyNetwork(configuration: request.model.configuration)
             let optimizer = ResumableAdamW(learningRate: request.settings.learningRate, weightDecay: request.settings.weightDecay)
             let checkpoints = CheckpointStore(root: URL(fileURLWithPath: request.preferences.checkpointsPath))
             var epoch = 0, cursor = 0, step = 0
             var hidden: [MLXArray] = [], lastLoss: Float = 0, validationLoss: Float?, bestLoss: Float?
+            var bestHasMatchedControl = false
+            var carries: [Int: [MLXArray]] = [:], restoredState: [String: MLXArray]?
             var initialWeights: InitialWeights? = .scratch
             var trainingRunID: UUID? = UUID()
             if request.resume {
@@ -121,7 +127,8 @@ enum TrainingWorker {
                 try restoreWeights(model, from: directory)
                 let state = try MLX.loadArrays(url: directory.appendingPathComponent("optimizer.safetensors"))
                 try optimizer.restore(state, model: model)
-                if saved.sampleCursor > 0 {
+                if request.settings.interleavesRecordings { restoredState = state }
+                else if saved.sampleCursor > 0 {
                     let count = model.configuration.memory == .recurrent ? model.configuration.memoryDepth : 1
                     hidden = try (0..<count).map { index in
                         guard let value = state["carry.\(index)"] else { throw DataIntegrityError.invalidData("This checkpoint is missing temporal state.") }
@@ -130,7 +137,9 @@ enum TrainingWorker {
                 }
                 epoch = saved.epoch; cursor = saved.sampleCursor; step = saved.step
                 lastLoss = saved.trainingLoss; validationLoss = saved.validationLoss; bestLoss = saved.bestValidationLoss
+                bestHasMatchedControl = saved.bestHasMatchedControl ?? false
                 progress.actionEvaluation = saved.actionEvaluation
+                progress.evaluationEpoch = saved.actionEvaluation == nil ? nil : saved.epoch
                 progress.checkpoint = saved.id
                 initialWeights = saved.initialWeights
                 trainingRunID = saved.trainingRunID
@@ -157,18 +166,44 @@ enum TrainingWorker {
             eval(model)
             model.train(true)
             let stage = request.stage
+            let capabilities = stage == .imitation ? request.settings.imitationCapabilities(model.configuration.capabilities)
+                : model.configuration.capabilities
+            let cursorIndependent = stage == .imitation && request.settings.usesCursorIndependentKeys
             let actionBalance = request.settings.balancesActionFrequency
-                ? (request.settings.actionBalanceVersion == 2 ? PolicyLoss.ActionBalance(frequencies: dataset.stateFrequencies)
+                ? ((request.settings.actionBalanceVersion ?? 1) >= 2 ? PolicyLoss.ActionBalance(frequencies: dataset.stateFrequencies,
+                    balanceTokens: request.settings.actionBalanceVersion == 3,
+                    recordings: request.settings.actionBalanceVersion == 3 ? dataset.training : [])
                     : PolicyLoss.ActionBalance(total: dataset.exampleCount, inputs: dataset.nonWaitExampleCount)) : nil
             let lossGradient = valueAndGrad(model: model) { model, arrays in
-                PolicyLoss.values(model, arrays, stage: stage, balanceInputChoices: request.settings.balancesInputChoices, actionBalance: actionBalance)
+                PolicyLoss.values(model, arrays, stage: stage, balanceInputChoices: request.settings.balancesInputChoices,
+                                  actionBalance: actionBalance, wholeSceneDetail: cursorIndependent)
             }
             var schedule = SequenceSchedule(recordings: dataset.training, batchSize: request.settings.batchSize,
-                sequenceLength: model.configuration.sequenceLength, seed: request.settings.seed &+ UInt64(epoch))
+                sequenceLength: model.configuration.sequenceLength, seed: request.settings.seed &+ UInt64(epoch),
+                interleaved: request.settings.interleavesRecordings, rotated: request.settings.rotatesSequences)
             guard (0...schedule.count).contains(cursor), epoch >= 0, optimizer.step == step else {
                 throw DataIntegrityError.invalidData("The checkpoint cursor or optimizer step is inconsistent.")
             }
-            if let plan = schedule.plan(at: cursor), !plan.resetsMemory {
+            if let state = restoredState {
+                let c = model.configuration, count = c.memory == .recurrent ? c.memoryDepth : 1
+                var expected: Set<String> = []
+                for group in schedule.pendingMemoryGroups(at: cursor) {
+                    let shape = c.memory == .recurrent ? [schedule.groups[group].count, c.memorySize]
+                        : [schedule.groups[group].count, c.sequenceLength - 1, c.memorySize]
+                    carries[group] = try (0..<count).map { index in
+                        let key = "carry.\(group).\(index)"
+                        expected.insert(key)
+                        guard let value = state[key], value.shape == shape else {
+                            throw DataIntegrityError.invalidData("This checkpoint is missing compatible temporal state for a recording group.")
+                        }
+                        return value
+                    }
+                }
+                guard Set(state.keys.filter { $0.hasPrefix("carry.") }) == expected else {
+                    throw DataIntegrityError.invalidData("The checkpoint's carried recording groups do not match its schedule.")
+                }
+                restoredState = nil
+            } else if !request.settings.interleavesRecordings, let plan = schedule.plan(at: cursor), !plan.resetsMemory {
                 let c = model.configuration
                 let count = c.memory == .recurrent ? c.memoryDepth : 1
                 let shape = c.memory == .recurrent ? [plan.recordings.count, c.memorySize]
@@ -202,6 +237,7 @@ enum TrainingWorker {
                 var evaluatedManifest = manifest
                 evaluatedManifest.initialWeights = initialWeights
                 evaluatedManifest.trainingRunID = trainingRunID
+                evaluatedManifest.bestHasMatchedControl = bestHasMatchedControl
                 // Mid-epoch weights have changed since the last validation pass.
                 // Its scores remain useful in the live UI, but do not describe
                 // these saved weights. Only epoch-boundary saves own the scores.
@@ -210,7 +246,13 @@ enum TrainingWorker {
                     try checkpoints.save(evaluatedManifest, isBest: isBest) { directory in
                         try MLX.save(arrays: Dictionary(uniqueKeysWithValues: model.parameters().flattened()), url: directory.appendingPathComponent("weights.safetensors"))
                         var state = optimizer.arrays()
-                        for (index, value) in hidden.enumerated() { state["carry.\(index)"] = value }
+                        if request.settings.interleavesRecordings {
+                            for (group, values) in carries {
+                                for (index, value) in values.enumerated() { state["carry.\(group).\(index)"] = value }
+                            }
+                        } else {
+                            for (index, value) in hidden.enumerated() { state["carry.\(index)"] = value }
+                        }
                         try MLX.save(arrays: state, url: directory.appendingPathComponent("optimizer.safetensors"))
                     }
                 }
@@ -236,8 +278,9 @@ enum TrainingWorker {
                         guard let plan = validationSchedule.plan(at: index) else { break }
                         if plan.resetsMemory { validationHidden = [] }
                         try autoreleasepool {
-                            let batch = try TrainingBatch.load(plan: plan, configuration: model.configuration, stage: stage, actionBalance: actionBalance, checkCancellation: {})
-                            let output = PolicyLoss.forward(model, batch.arrays + validationHidden)
+                            let batch = try TrainingBatch.load(plan: plan, configuration: model.configuration, stage: stage,
+                                actionBalance: actionBalance, capabilities: capabilities, cursorIndependent: cursorIndependent, checkCancellation: {})
+                            let output = PolicyLoss.forward(model, batch.arrays + validationHidden, wholeSceneDetail: cursorIndependent)
                             let loss = PolicyLoss.loss(output, batch.arrays, stage: stage, balanceInputChoices: request.settings.balancesInputChoices,
                                                        actionBalance: actionBalance)
                             validationHidden = output.hidden.map { stopGradient($0) }
@@ -250,7 +293,8 @@ enum TrainingWorker {
                                     targets: batch.arrays[BatchField.actions.rawValue], valid: batch.arrays[BatchField.valid.rawValue],
                                     mask: batch.arrays[BatchField.actionMask.rawValue],
                                     actions: PolicyActionCodec(capabilities: model.configuration.capabilities).actions,
-                                    hierarchical: request.settings.balancesActionFrequency))
+                                    hierarchical: request.settings.balancesActionFrequency,
+                                    context: batch.arrays[BatchField.context.rawValue]))
                             }
                         }
                     }
@@ -260,7 +304,7 @@ enum TrainingWorker {
                     // same weights instead of silently skipping it (or claiming
                     // completion when interrupted in the final epoch).
                     if control.current != .run || Date() >= deadline {
-                        validationLoss = nil; progress.actionEvaluation = nil
+                        validationLoss = nil; progress.actionEvaluation = nil; progress.evaluationEpoch = nil
                         try saveCheckpoint(isBest: false)
                         let cancelled = control.current == .cancel
                         report(cancelled ? .cancelled : .paused,
@@ -272,25 +316,64 @@ enum TrainingWorker {
                     let validationComplete = examples > 0
                     validationLoss = validationComplete ? Float(weightedLoss / Double(examples)) : nil
                     progress.actionEvaluation = validationComplete && stage == .imitation ? evaluation : nil
-                    let improved = validationLoss.map { $0 < (bestLoss ?? .infinity) } ?? false
-                    if improved { bestLoss = validationLoss }
+                    progress.evaluationEpoch = progress.actionEvaluation == nil ? nil : epoch + 1
+                    let matchedControl = progress.actionEvaluation?.hasMatchedControl ?? false
+                    let improved = validationLoss.map {
+                        prefersCheckpoint(loss: $0, matchedControl: matchedControl, bestLoss: bestLoss,
+                            bestHasMatchedControl: bestHasMatchedControl,
+                            requireMatchedControl: stage == .imitation && request.settings.prefersMatchedControlCheckpoints)
+                    } ?? false
+                    if improved { bestLoss = validationLoss; bestHasMatchedControl = matchedControl }
                     progress.history.append(LossPoint(step: step, training: lastLoss, validation: validationLoss))
-                    epoch += 1; cursor = 0; hidden = []
+                    epoch += 1; cursor = 0; hidden = []; carries = [:]
                     try saveCheckpoint(isBest: improved)
                     schedule = SequenceSchedule(recordings: dataset.training, batchSize: request.settings.batchSize,
-                        sequenceLength: model.configuration.sequenceLength, seed: request.settings.seed &+ UInt64(epoch))
+                        sequenceLength: model.configuration.sequenceLength, seed: request.settings.seed &+ UInt64(epoch),
+                        interleaved: request.settings.interleavesRecordings, rotated: request.settings.rotatesSequences)
                     continue
                 }
                 if plan.resetsMemory { hidden = [] }
+                var batchHidden = request.settings.interleavesRecordings ? (plan.resetsMemory ? [] : (carries[plan.memoryGroup] ?? [])) : hidden
+                if plan.warmupChunks > 0 {
+                    // Warm the exact causal prefix with current weights. Random
+                    // epoch offsets must never inject future memory into earlier
+                    // frames, or approximate a long memory with just one chunk.
+                    var warmed: [MLXArray] = [], interrupted = false
+                    for chunk in 0..<plan.warmupChunks {
+                        if control.current != .run || Date() >= deadline { interrupted = true; break }
+                        report(.training, "Warming recording history · \(chunk + 1)/\(plan.warmupChunks)")
+                        try autoreleasepool {
+                            let prefix = try TrainingBatch.load(plan: SequenceBatchPlan(recordings: plan.recordings, chunk: chunk),
+                                configuration: model.configuration, stage: stage, actionBalance: actionBalance, capabilities: capabilities,
+                                cursorIndependent: cursorIndependent, checkCancellation: {})
+                            let output = PolicyLoss.forward(model, prefix.arrays + warmed, wholeSceneDetail: cursorIndependent)
+                            warmed = output.hidden.map { stopGradient($0) }; eval(warmed)
+                        }
+                    }
+                    if interrupted || control.current != .run || Date() >= deadline {
+                        try saveCheckpoint(isBest: false)
+                        let cancelled = control.current == .cancel
+                        report(cancelled ? .cancelled : .paused,
+                               step == 0 ? "Stopped before the first optimizer update. No new checkpoint was created; start a new run to try again."
+                               : cancelled ? "Cancelled safely during memory warm-up." : "Paused during memory warm-up. Resume will repeat the causal prefix.")
+                        return
+                    }
+                    batchHidden = warmed
+                }
                 report(.training, stage == .pretraining ? "Learning action-conditioned visual dynamics" : "Learning demonstrated actions and timing")
                 try autoreleasepool {
-                    let batch = try TrainingBatch.load(plan: plan, configuration: model.configuration, stage: stage, actionBalance: actionBalance, checkCancellation: {})
-                    let (values, gradients) = lossGradient(model, batch.arrays + hidden)
+                    let batch = try TrainingBatch.load(plan: plan, configuration: model.configuration, stage: stage,
+                        actionBalance: actionBalance, capabilities: capabilities, cursorIndependent: cursorIndependent, checkCancellation: {})
+                    let (values, gradients) = lossGradient(model, batch.arrays + batchHidden)
                     let loss = values[0].item(Float.self)
                     guard loss.isFinite else { throw DataIntegrityError.invalidData("Training loss became non-finite. Reduce the learning rate and start from a valid checkpoint.") }
-                    let norm = optimizer.update(model: model, gradients: gradients, clip: request.settings.gradientClip).item(Float.self)
+                    let clip = request.settings.gradientClip * (request.settings.balancesGradientClipping ? batch.gradientWeightScale : 1)
+                    let norm = optimizer.update(model: model, gradients: gradients, clip: clip).item(Float.self)
                     guard norm.isFinite else { throw DataIntegrityError.invalidData("Gradients became non-finite. The previous checkpoint remains unchanged.") }
-                    hidden = Array(values.dropFirst()); eval(hidden)
+                    let nextHidden = Array(values.dropFirst()); eval(nextHidden)
+                    if request.settings.interleavesRecordings {
+                        carries[plan.memoryGroup] = plan.endsMemory ? nil : nextHidden
+                    } else { hidden = nextHidden }
                     lastLoss = loss; progress.gradientNorm = norm
                 }
                 step += 1; cursor += 1; completedThisRun += 1
@@ -317,6 +400,12 @@ enum TrainingWorker {
             throw DataIntegrityError.invalidData("Checkpoint tensor names or shapes do not match the model.")
         }
         model.update(parameters: ModuleParameters.unflattened(weights))
+    }
+
+    static func prefersCheckpoint(loss: Float, matchedControl: Bool, bestLoss: Float?, bestHasMatchedControl: Bool,
+                                  requireMatchedControl: Bool) -> Bool {
+        if requireMatchedControl, bestLoss != nil, matchedControl != bestHasMatchedControl { return matchedControl }
+        return loss < (bestLoss ?? .infinity)
     }
 
     private static func processCPUSeconds() -> Double {

@@ -9,6 +9,13 @@ import MLX
 enum ObservationPreprocessor {
     static let version = 1
 
+    static func modelState(_ state: InputState, bounds: CaptureRect, cursorIndependent: Bool) -> InputState {
+        guard cursorIndependent else { return state }
+        var result = state
+        result.cursorX = bounds.x + bounds.width / 2; result.cursorY = bounds.y + bounds.height / 2
+        return result
+    }
+
     static func image(at url: URL) throws -> CGImage {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCache: false] as CFDictionary) else {

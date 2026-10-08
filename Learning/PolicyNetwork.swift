@@ -121,13 +121,15 @@ final class PolicyNetwork: Module {
     /// training and inference. GRU hidden carries are explicit, never global state.
     func callAsFunction(images: MLXArray, crops: MLXArray?, context: MLXArray, previousActions: MLXArray,
                         instructions: MLXArray, dynamicsActions: MLXArray, dynamicsArguments: MLXArray,
-                        hidden: [MLXArray] = [], encodedVision: MLXArray? = nil, encodedDetail: MLXArray? = nil) -> PolicyForward {
+                        hidden: [MLXArray] = [], encodedVision: MLXArray? = nil, encodedDetail: MLXArray? = nil,
+                        wholeSceneDetail: Bool = false) -> PolicyForward {
         let batch = images.dim(0), length = images.dim(1), n = batch * length
         let c = configuration, patches = vision.gridSize * vision.gridSize
         let tokens = encodedVision ?? vision(images.reshaped([n, c.imageSize, c.imageSize, 3]))
         var features = [mean(tokens, axis: 1).reshaped([batch, length, c.visualWidth]), gelu(contextProjection(context)), previousActionEmbedding(previousActions)]
         if c.detailCrop, let crops {
-            let detail = encodedDetail ?? mean(vision(crops.reshaped([n, c.imageSize, c.imageSize, 3])), axis: 1)
+            let detail = wholeSceneDetail ? mean(tokens, axis: 1)
+                : (encodedDetail ?? mean(vision(crops.reshaped([n, c.imageSize, c.imageSize, 3])), axis: 1))
             features.append(detail.reshaped([batch, length, c.visualWidth]))
         }
         if c.instructionConditioning {

@@ -46,7 +46,40 @@ struct TrainingSettings: Codable, Equatable, Sendable {
     // Missing in older checkpoints preserves their exact objective and decoder.
     // New runs balance the decision to act as well as the choice of input.
     var balancedActionFrequency: Bool? = true
-    var actionBalanceVersion: Int? = 2
+    var actionBalanceVersion: Int? = 3
+    // Missing preserves old fixed-threshold clipping on weighted gradients.
+    var balancedGradientClipping: Bool? = true
+    var matchedControlCheckpoints: Bool? = true
+    var prefersMatchedControlCheckpoints: Bool {
+        get { matchedControlCheckpoints ?? false }
+        set { matchedControlCheckpoints = newValue }
+    }
+    var balancesGradientClipping: Bool {
+        get { balancedGradientClipping ?? false }
+        set { balancedGradientClipping = newValue }
+    }
+    // Missing in checkpoints preserves the original recording-block schedule.
+    var sequenceScheduleVersion: Int? = 3
+    var interleavesRecordings: Bool { (sequenceScheduleVersion ?? 1) >= 2 }
+    var rotatesSequences: Bool { sequenceScheduleVersion == 3 }
+    var ignorePointerMovement: Bool?
+    var cursorIndependentKeys: Bool? = true
+    var usesCursorIndependentKeys: Bool { ignoresPointerMovement && (cursorIndependentKeys ?? false) }
+    var ignoreKeyRepeats: Bool?
+    var ignoresKeyRepeats: Bool {
+        get { ignoreKeyRepeats ?? false }
+        set { ignoreKeyRepeats = newValue }
+    }
+    var ignoresPointerMovement: Bool {
+        get { ignorePointerMovement ?? false }
+        set { ignorePointerMovement = newValue }
+    }
+    func imitationCapabilities(_ capabilities: ActionCapabilities) -> ActionCapabilities {
+        var allowed = capabilities
+        if ignoresPointerMovement { allowed.pointer = false; allowed.relativePointer = false }
+        if ignoresKeyRepeats { allowed.repeatsKeys = false }
+        return allowed
+    }
     var balancesActionFrequency: Bool {
         get { balancedActionFrequency ?? false }
         set { balancedActionFrequency = newValue }
@@ -62,8 +95,8 @@ struct TrainingSettings: Codable, Equatable, Sendable {
               validationFraction.isFinite && (0...0.5).contains(validationFraction), (1...30).contains(maximumRunMinutes) else {
             throw DataIntegrityError.invalidData("Use valid training settings and a time budget from 1 to 30 minutes.")
         }
-        guard (1...2).contains(actionBalanceVersion ?? 1) else {
-            throw DataIntegrityError.invalidData("This action-balancing version is not supported.")
+        guard (1...3).contains(actionBalanceVersion ?? 1), (1...3).contains(sequenceScheduleVersion ?? 1) else {
+            throw DataIntegrityError.invalidData("This training-method version is not supported.")
         }
     }
 }
@@ -87,6 +120,7 @@ struct CheckpointManifest: Codable, Sendable {
     var trainingLoss: Float
     var validationLoss: Float?
     var bestValidationLoss: Float?
+    var bestHasMatchedControl: Bool?
     var actionEvaluation: ActionEvaluation?
     // Nil means provenance was not recorded by an earlier app version.
     var initialWeights: InitialWeights?

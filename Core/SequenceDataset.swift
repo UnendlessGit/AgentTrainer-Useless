@@ -4,6 +4,7 @@ import CryptoKit
 struct ActionFrequency: Sendable {
     var total = 0
     var inputs = 0
+    var actionCounts: [Int: Int] = [:]
 
     // Distinguish idle, keyboard holds, mouse holds and combined holds. Repeats
     // and releases are much denser during holds than initial presses while idle.
@@ -48,6 +49,10 @@ struct IndexedRecording: Sendable {
 struct SequenceBatchPlan: Sendable {
     var recordings: [IndexedRecording]
     var chunk: Int
+    var memoryGroup = 0
+    var endsMemory = false
+    var sequencePosition = 0
+    var warmupChunks = 0
     var resetsMemory: Bool { chunk == 0 }
 }
 
@@ -57,23 +62,71 @@ struct SequenceSchedule {
     let groups: [[IndexedRecording]]
     let groupSteps: [Int]
     let sequenceLength: Int
+    let interleaved: Bool
+    let groupStarts: [Int]
+    // At most eight batch groups retain memory at once, independent of corpus size.
+    static let maximumActiveGroups = 8
     var count: Int { groupSteps.reduce(0, +) }
 
-    init(recordings: [IndexedRecording], batchSize: Int, sequenceLength: Int, seed: UInt64) {
+    init(recordings: [IndexedRecording], batchSize: Int, sequenceLength: Int, seed: UInt64, interleaved: Bool = false, rotated: Bool = false) {
         var generator = StableRandom(seed: seed)
         let shuffled = recordings.sorted { $0.item.id.uuidString < $1.item.id.uuidString }.shuffled(using: &generator)
         groups = stride(from: 0, to: shuffled.count, by: batchSize).map { Array(shuffled[$0..<min(shuffled.count, $0 + batchSize)]) }
         groupSteps = groups.map { group in group.map { ($0.count + sequenceLength - 1) / sequenceLength }.max() ?? 0 }
         self.sequenceLength = sequenceLength
+        self.interleaved = interleaved
+        groupStarts = groupSteps.map { rotated && $0 > 1 ? Int.random(in: 0..<$0, using: &generator) : 0 }
     }
 
     func plan(at cursor: Int) -> SequenceBatchPlan? {
+        guard cursor >= 0, cursor < count else { return nil }
         var remaining = cursor
+        if interleaved {
+            for start in stride(from: 0, to: groups.count, by: Self.maximumActiveGroups) {
+                let end = min(groups.count, start + Self.maximumActiveGroups)
+                let steps = Array(groupSteps[start..<end]), total = steps.reduce(0, +)
+                if remaining >= total { remaining -= total; continue }
+                // Locate the round without materializing a corpus-sized plan array.
+                var low = 0, high = steps.max() ?? 0
+                while low < high {
+                    let middle = (low + high + 1) / 2
+                    if steps.reduce(0, { $0 + min($1, middle) }) <= remaining { low = middle }
+                    else { high = middle - 1 }
+                }
+                let chunk = low
+                remaining -= steps.reduce(0) { $0 + min($1, chunk) }
+                for group in start..<end where chunk < groupSteps[group] {
+                    if remaining == 0 {
+                        let actualChunk = (groupStarts[group] + chunk) % groupSteps[group]
+                        return SequenceBatchPlan(recordings: groups[group], chunk: actualChunk, memoryGroup: group,
+                            endsMemory: chunk + 1 == groupSteps[group], sequencePosition: chunk,
+                            warmupChunks: chunk == 0 ? groupStarts[group] : 0)
+                    }
+                    remaining -= 1
+                }
+                return nil
+            }
+            return nil
+        }
         for (index, steps) in groupSteps.enumerated() {
-            if remaining < steps { return SequenceBatchPlan(recordings: groups[index], chunk: remaining) }
+            if remaining < steps {
+                return SequenceBatchPlan(recordings: groups[index], chunk: remaining, memoryGroup: index, endsMemory: remaining + 1 == steps)
+            }
             remaining -= steps
         }
         return nil
+    }
+
+    /// Groups with partially consumed sequences at this cursor. Used to verify
+    /// all carried states on Resume, including a group whose next chunk is later.
+    func pendingMemoryGroups(at cursor: Int) -> [Int] {
+        guard let next = plan(at: cursor) else { return [] }
+        guard interleaved else { return next.resetsMemory ? [] : [next.memoryGroup] }
+        let start = next.memoryGroup / Self.maximumActiveGroups * Self.maximumActiveGroups
+        return (start..<min(groups.count, start + Self.maximumActiveGroups)).filter { group in
+            let consumed = next.sequencePosition + (group < next.memoryGroup ? 1 : 0)
+            return consumed > 0 && consumed < groupSteps[group]
+        }
     }
 }
 
@@ -98,8 +151,13 @@ struct PreparedDataset: Sendable {
     var nonWaitExampleCount: Int { training.reduce(0) { $0 + $1.nonWaitCount } }
     var stateFrequencies: [ActionFrequency] {
         (0..<4).map { group in
-            ActionFrequency(total: training.reduce(0) { $0 + $1.stateFrequencies[group].total },
-                            inputs: training.reduce(0) { $0 + $1.stateFrequencies[group].inputs })
+            var frequency = ActionFrequency()
+            for recording in training {
+                let own = recording.stateFrequencies[group]
+                frequency.total += own.total; frequency.inputs += own.inputs
+                for (token, count) in own.actionCounts { frequency.actionCounts[token, default: 0] += count }
+            }
+            return frequency
         }
     }
 
@@ -115,6 +173,11 @@ struct PreparedDataset: Sendable {
         var fingerprint = SHA256(), indexed: [IndexedRecording] = [], excluded = 0
         let datasetVersion = stage == .pretraining ? "dataset-v2-wait-futures" : "dataset-v1"
         fingerprint.update(data: Data("\(datasetVersion)|\(stage.rawValue)|\(configuration.fingerprint)|\(settings.seed)|\(settings.validationFraction)".utf8))
+        let ignorePointer = stage == .imitation && settings.ignoresPointerMovement
+        let ignoreRepeats = stage == .imitation && settings.ignoresKeyRepeats
+        if ignorePointer { fingerprint.update(data: Data("|ignore-pointer-v1".utf8)) }
+        if stage == .imitation && settings.usesCursorIndependentKeys { fingerprint.update(data: Data("|keyboard-cursor-v1".utf8)) }
+        if ignoreRepeats { fingerprint.update(data: Data("|ignore-repeat-v1".utf8)) }
         let codec = PolicyActionCodec(capabilities: configuration.capabilities)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         for item in items.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
@@ -139,7 +202,7 @@ struct PreparedDataset: Sendable {
             var count = 0, nonWaitCount = 0, position: UInt64 = 0, previousImage = ""
             var frequencies = Array(repeating: ActionFrequency(), count: 4)
             var finalFutureImage: String?
-            try TrainingExampleBuilder.stream(item: item) { example in
+            try TrainingExampleBuilder.stream(item: item, ignoringPointerMovement: ignorePointer, ignoringKeyRepeats: ignoreRepeats) { example in
                 try checkCancellation()
                 let bounds = example.observation.globalBounds
                 guard bounds.isValid else { throw DataIntegrityError.invalidData("\(item.name) has invalid observation geometry.") }
@@ -154,7 +217,7 @@ struct PreparedDataset: Sendable {
                     if !bounds.cgRect.contains(CGPoint(x: example.state.cursorX, y: example.state.cursorY)) { excluded += 1; return }
                 default: break
                 }
-                guard codec.token(for: example.targetAction) != nil,
+                guard let token = codec.token(for: example.targetAction),
                       configuration.capabilities.permits(example.targetAction, state: example.state) else {
                     throw DataIntegrityError.invalidData("“\(item.name)” contains \(example.targetAction.label), which this model cannot produce in that input state. Enable the corresponding capability in AI Models, or trim/exclude that part of the recording.")
                 }
@@ -171,7 +234,10 @@ struct PreparedDataset: Sendable {
                 position += UInt64(row.count + 1); count += 1
                 let group = ActionFrequency.group(for: example.state)
                 frequencies[group].total += 1
-                if case .wait = example.targetAction {} else { nonWaitCount += 1; frequencies[group].inputs += 1 }
+                if case .wait = example.targetAction {} else {
+                    nonWaitCount += 1; frequencies[group].inputs += 1
+                    frequencies[group].actionCounts[token, default: 0] += 1
+                }
             }
             // A trim may end exactly at the final observation. Its pixels are
             // still a pretraining target even when it has no decision of its own.

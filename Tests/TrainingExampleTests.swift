@@ -165,6 +165,48 @@ final class TrainingExampleTests: XCTestCase {
 }
 
 extension TrainingExampleTests {
+    func testIgnoringPointerAndAutorepeatPreservesHoldsTimingAndCursorContext() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let journal = try RecordingJournal(root: root, manifest: RecordingManifest(name: "Keys with incidental cursor", folderID: UUID(),
+            kind: .imitation, target: CaptureTarget(), settings: RecordingSettings()))
+        for tick in 1...5 {
+            let time = UInt64(tick) * 100_000_000
+            try journal.append(observation: VisualObservation(id: 0, timeNanoseconds: time, sourceTimeNanoseconds: time,
+                imageFile: "frames/0.jpg", width: 1, height: 1, globalBounds: CaptureRect(CGRect(x: 0, y: 0, width: 100, height: 100)),
+                state: InputState(), reusedPixels: false))
+        }
+        for (time, action): (UInt64, ComputerAction) in [(110_000_000, .pointer(x: 10, y: 20)), (120_000_000, .keyDown(code: 13)),
+            (210_000_000, .pointer(x: 30, y: 40)), (250_000_000, .keyDown(code: 13)),
+            (310_000_000, .relativePointer(dx: 5, dy: 5)), (350_000_000, .keyDown(code: 13)), (420_000_000, .keyUp(code: 13))] {
+            try journal.append(event: InputTransition(id: 0, timeNanoseconds: time, action: action,
+                isRepeat: time == 250_000_000 || time == 350_000_000))
+        }
+        try journal.finish(at: 550_000_000)
+        let item = RecordingItem(manifest: journal.snapshot, edits: RecordingEdits(), url: journal.url)
+        let original = try Data(contentsOf: journal.url.appendingPathComponent("events.jsonl"))
+        var pointerOnly: [TrainingExample] = []
+        try TrainingExampleBuilder.stream(item: item, ignoringPointerMovement: true) { pointerOnly.append($0) }
+        XCTAssertEqual(pointerOnly.filter { if case .keyRepeat = $0.targetAction { return true }; return false }.count, 2)
+        var filtered: [TrainingExample] = []
+        try TrainingExampleBuilder.stream(item: item, ignoringPointerMovement: true, ignoringKeyRepeats: true) { filtered.append($0) }
+        XCTAssertEqual(filtered.first?.targetAction, .keyDown(code: 13))
+        XCTAssertEqual(filtered.first?.decisionTime, 110_000_000)
+        XCTAssertEqual(filtered.first?.state.cursorX, 10)
+        XCTAssertEqual(filtered.first?.state.cursorY, 20)
+        XCTAssertEqual(filtered.filter { if case .keyDown = $0.targetAction { return true }; return false }.count, 1)
+        XCTAssertEqual(filtered.filter { if case .keyUp = $0.targetAction { return true }; return false }.count, 1)
+        XCTAssertFalse(filtered.contains { switch $0.targetAction { case .pointer, .relativePointer, .keyRepeat: return true; default: return false } })
+        XCTAssertFalse(filtered.contains { switch $0.previousAction { case .pointer, .relativePointer, .keyRepeat: return true; default: return false } })
+        for row in filtered where row.decisionTime >= 200_000_000 && row.decisionTime <= 420_000_000 {
+            XCTAssertEqual(row.state.keys, [13])
+        }
+        let release = try XCTUnwrap(filtered.first { if case .keyUp = $0.targetAction { return true }; return false })
+        XCTAssertEqual(release.state.cursorX, 35); XCTAssertEqual(release.state.cursorY, 45)
+        XCTAssertEqual(filtered.last?.state.keys, [])
+        XCTAssertEqual(try Data(contentsOf: journal.url.appendingPathComponent("events.jsonl")), original)
+    }
+
     func testLongHoldRemainsHeldThroughWaitsUntilRecordedRelease() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

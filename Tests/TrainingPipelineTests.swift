@@ -244,24 +244,84 @@ final class TrainingPipelineTests: XCTestCase {
         try checkWorkerPauseResume(architecture: .recurrent, balanceInputChoices: true)
     }
 
-    private func checkWorkerPauseResume(architecture: TemporalArchitecture, balanceInputChoices: Bool = false, balanceActionFrequency: Bool = false) throws {
+    func testInterleavedRecurrentResumeRestoresEveryRecordingGroup() throws {
+        try checkWorkerPauseResume(architecture: .recurrent, balanceActionFrequency: true, scheduleVersion: 2, balanceVersion: 3, recordingCount: 7, pauseStep: 9)
+    }
+
+    func testInterleavedAttentionResumeRestoresEveryRecordingGroup() throws {
+        try checkWorkerPauseResume(architecture: .attention, balanceActionFrequency: true, scheduleVersion: 2, balanceVersion: 3, recordingCount: 7, pauseStep: 9)
+    }
+
+    func testRotatedRecurrentResumeMatchesUninterruptedWeights() throws {
+        try checkWorkerPauseResume(architecture: .recurrent, balanceActionFrequency: true, scheduleVersion: 3, balanceVersion: 3, recordingCount: 7, pauseStep: 9)
+    }
+
+    func testRotatedAttentionResumeMatchesUninterruptedWeights() throws {
+        try checkWorkerPauseResume(architecture: .attention, balanceActionFrequency: true, scheduleVersion: 3, balanceVersion: 3, recordingCount: 7, pauseStep: 9)
+    }
+
+    func testPauseDuringRotatedHistoryWarmupResumesExactly() throws {
+        try checkWorkerPauseResume(architecture: .recurrent, balanceActionFrequency: true, scheduleVersion: 3, balanceVersion: 3,
+                                   recordingCount: 7, pauseDuringWarmup: true)
+    }
+
+    func testOlderRotatedCheckpointKeepsFixedGradientClippingOnResume() throws {
+        try checkWorkerPauseResume(architecture: .recurrent, balanceActionFrequency: true, scheduleVersion: 3, balanceVersion: 3,
+                                   recordingCount: 7, pauseStep: 9, weightedClip: nil, matchedControlSelection: nil)
+    }
+
+    func testPauseBeforeFirstWarmupUpdateDoesNotClaimANewCheckpoint() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let items = try [recording(root: root), recording(root: root)]
+        let item = try recording(root: root)
+        var model = AIModel(name: "Initial warmup"); model.configuration = configuration()
+        var settings = TrainingSettings(); settings.epochs = 1; settings.batchSize = 1
+        let dataset = try PreparedDataset.prepare(items: [item], configuration: model.configuration, settings: settings,
+            stage: .imitation, root: root.appendingPathComponent("probe"), checkCancellation: {}, progress: { _ in })
+        settings.seed = try XCTUnwrap((0..<100).map(UInt64.init).first { seed in
+            SequenceSchedule(recordings: dataset.training, batchSize: 1, sequenceLength: model.configuration.sequenceLength,
+                             seed: seed, interleaved: true, rotated: true).plan(at: 0).map { $0.warmupChunks > 0 } ?? false
+        })
+        let preferences = AppPreferences.defaults(at: root), control = TrainingControl(), progress = ProgressCollector()
+        TrainingWorker.run(TrainingRequest(model: model, settings: settings, stage: .imitation, items: [item], preferences: preferences, resume: false),
+            control: control, publish: { update in
+                progress.append(update)
+                if update.message.hasPrefix("Warming recording history") { control.set(.pause) }
+            }, checkpointSaved: { _ in XCTFail("No optimizer update occurred") })
+        XCTAssertEqual(progress.last?.phase, .paused)
+        XCTAssertEqual(progress.last?.step, 0)
+        XCTAssertNil(progress.last?.checkpoint)
+        XCTAssertTrue(progress.last?.message.contains("No new checkpoint") ?? false)
+        XCTAssertNil(try CheckpointStore(root: URL(fileURLWithPath: preferences.checkpointsPath))
+            .latest(modelID: model.id, stage: .imitation, configuration: model.configuration))
+    }
+
+    private func checkWorkerPauseResume(architecture: TemporalArchitecture, balanceInputChoices: Bool = false, balanceActionFrequency: Bool = false,
+                                       scheduleVersion: Int? = nil, balanceVersion: Int? = 2, recordingCount: Int = 2, pauseStep: Int = 1,
+                                       pauseDuringWarmup: Bool = false, weightedClip: Bool? = true, matchedControlSelection: Bool? = true) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let items = try (0..<recordingCount).map { _ in try recording(root: root) }
         var model = AIModel(name: "Training pipeline"); model.configuration = configuration()
         model.configuration.memory = architecture
         var settings = TrainingSettings(); settings.epochs = 1; settings.batchSize = 1; settings.checkpointInterval = 100
         settings.balancesInputChoices = balanceInputChoices
         settings.balancesActionFrequency = balanceActionFrequency
+        settings.sequenceScheduleVersion = scheduleVersion; settings.actionBalanceVersion = balanceVersion
+        settings.balancedGradientClipping = weightedClip
+        settings.matchedControlCheckpoints = matchedControlSelection
         var preferences = AppPreferences.defaults(at: root)
         preferences.memoryLimitGB = 4; preferences.cacheLimitGB = 1
         let pause = TrainingControl(), first = ProgressCollector()
         let request = TrainingRequest(model: model, settings: settings, stage: .imitation, items: items, preferences: preferences, resume: false)
         TrainingWorker.run(request, control: pause, publish: { update in
             first.append(update)
-            if update.phase == .training && update.step == 1 { pause.set(.pause) }
+            if update.phase == .training && (pauseDuringWarmup
+                ? update.step > 0 && update.message.hasPrefix("Warming recording history")
+                : update.step == pauseStep) { pause.set(.pause) }
         }, checkpointSaved: { _ in })
         XCTAssertEqual(first.last?.phase, .paused, first.last?.message ?? "Missing progress")
+        if pauseDuringWarmup { XCTAssertTrue(first.last?.message.contains("memory warm-up") ?? false) }
         XCTAssertNotNil(first.last?.checkpoint)
         let resumed = ProgressCollector()
         TrainingWorker.run(TrainingRequest(model: model, settings: settings, stage: .imitation, items: items, preferences: preferences, resume: true),
@@ -273,16 +333,23 @@ final class TrainingPipelineTests: XCTestCase {
         let checkpoints = CheckpointStore(root: URL(fileURLWithPath: preferences.checkpointsPath))
         let resumedCheckpoint = try XCTUnwrap(checkpoints.latest(modelID: model.id, stage: .imitation, configuration: model.configuration))
         let resumedWeights = try MLX.loadArrays(url: resumedCheckpoint.1.appendingPathComponent("weights.safetensors"))
+        let resumedOptimizer = try MLX.loadArrays(url: resumedCheckpoint.1.appendingPathComponent("optimizer.safetensors"))
         let uninterrupted = ProgressCollector()
         TrainingWorker.run(request, control: TrainingControl(), publish: uninterrupted.append, checkpointSaved: { _ in })
         XCTAssertEqual(uninterrupted.last?.phase, .complete, uninterrupted.last?.message ?? "Missing progress")
         let fullCheckpoint = try XCTUnwrap(checkpoints.latest(modelID: model.id, stage: .imitation, configuration: model.configuration))
         let fullWeights = try MLX.loadArrays(url: fullCheckpoint.1.appendingPathComponent("weights.safetensors"))
+        let fullOptimizer = try MLX.loadArrays(url: fullCheckpoint.1.appendingPathComponent("optimizer.safetensors"))
         for key in resumedWeights.keys {
             XCTAssertLessThan(max(abs(resumedWeights[key]! - fullWeights[key]!)).item(Float.self), 1e-5, key)
         }
         XCTAssertEqual(resumedCheckpoint.0.step, fullCheckpoint.0.step)
         XCTAssertEqual(resumedCheckpoint.0.validationRecordingIDs, fullCheckpoint.0.validationRecordingIDs)
+        XCTAssertEqual(resumedCheckpoint.0.bestHasMatchedControl, fullCheckpoint.0.bestHasMatchedControl)
+        XCTAssertEqual(resumedCheckpoint.0.actionEvaluation?.initialPressTotal, 5)
+        for key in resumedOptimizer.keys {
+            XCTAssertLessThanOrEqual(max(abs(resumedOptimizer[key]! - fullOptimizer[key]!)).item(Float.self), 1e-5, key)
+        }
     }
 
     func testPretrainingWorkerProducesFiniteCheckpointAndImitationContinuesFromIt() throws {
@@ -346,11 +413,20 @@ final class TrainingPipelineTests: XCTestCase {
         let dataset = try PreparedDataset.prepare(items: items, configuration: model.configuration, settings: settings,
             stage: .imitation, root: root.appendingPathComponent("expected"), checkCancellation: {}, progress: { _ in })
         let schedule = SequenceSchedule(recordings: dataset.training, batchSize: settings.batchSize,
-            sequenceLength: model.configuration.sequenceLength, seed: settings.seed)
-        let batch = try TrainingBatch.load(plan: XCTUnwrap(schedule.plan(at: 0)), configuration: model.configuration,
+            sequenceLength: model.configuration.sequenceLength, seed: settings.seed,
+            interleaved: settings.interleavesRecordings, rotated: settings.rotatesSequences)
+        let plan = try XCTUnwrap(schedule.plan(at: 0))
+        var hidden: [MLXArray] = []
+        for chunk in 0..<plan.warmupChunks {
+            let prefix = try TrainingBatch.load(plan: SequenceBatchPlan(recordings: plan.recordings, chunk: chunk),
+                configuration: model.configuration, stage: .imitation, checkCancellation: {})
+            hidden = PolicyLoss.forward(expected, prefix.arrays + hidden).hidden.map { stopGradient($0) }
+            eval(hidden)
+        }
+        let batch = try TrainingBatch.load(plan: plan, configuration: model.configuration,
             stage: .imitation, checkCancellation: {})
         let gradient = valueAndGrad(model: expected) { model, arrays in PolicyLoss.values(model, arrays, stage: .imitation) }
-        let (_, gradients) = gradient(expected, batch.arrays)
+        let (_, gradients) = gradient(expected, batch.arrays + hidden)
         let optimizer = ResumableAdamW(learningRate: settings.learningRate, weightDecay: settings.weightDecay)
         _ = optimizer.update(model: expected, gradients: gradients, clip: settings.gradientClip)
         let actual = try MLX.loadArrays(url: child.1.appendingPathComponent("weights.safetensors"))
@@ -366,6 +442,179 @@ final class TrainingPipelineTests: XCTestCase {
 }
 
 extension TrainingPipelineTests {
+    func testMatchedControlCheckpointPreferencePreservesInitiationAndLegacyLossSelection() {
+        XCTAssertTrue(TrainingWorker.prefersCheckpoint(loss: 10, matchedControl: true, bestLoss: 0.1,
+            bestHasMatchedControl: false, requireMatchedControl: true))
+        XCTAssertFalse(TrainingWorker.prefersCheckpoint(loss: 0.01, matchedControl: false, bestLoss: 10,
+            bestHasMatchedControl: true, requireMatchedControl: true))
+        XCTAssertTrue(TrainingWorker.prefersCheckpoint(loss: 5, matchedControl: true, bestLoss: 10,
+            bestHasMatchedControl: true, requireMatchedControl: true))
+        XCTAssertTrue(TrainingWorker.prefersCheckpoint(loss: 0.1, matchedControl: false, bestLoss: nil,
+            bestHasMatchedControl: false, requireMatchedControl: true))
+        XCTAssertFalse(TrainingWorker.prefersCheckpoint(loss: 10, matchedControl: true, bestLoss: 0.1,
+            bestHasMatchedControl: false, requireMatchedControl: false))
+        XCTAssertTrue(TrainingWorker.prefersCheckpoint(loss: 0.01, matchedControl: false, bestLoss: 10,
+            bestHasMatchedControl: true, requireMatchedControl: false))
+    }
+
+    func testBalancedClippingUsesValidSampleImportanceAndPreservesLegacyLimits() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let item = try recording(root: root), c = configuration(), settings = TrainingSettings()
+        let dataset = try PreparedDataset.prepare(items: [item], configuration: c, settings: settings, stage: .imitation,
+            root: root.appendingPathComponent("index"), checkCancellation: {}, progress: { _ in })
+        let plan = SequenceBatchPlan(recordings: dataset.training, chunk: 5)
+        let balanced = PolicyLoss.ActionBalance(frequencies: dataset.stateFrequencies, balanceTokens: true, recordings: dataset.training)
+        let batch = try TrainingBatch.load(plan: plan, configuration: c, stage: .imitation, actionBalance: balanced, checkCancellation: {})
+        // Idle has five presses and one wait: the rare wait has weight 3.
+        // There is one valid row and one padding row; two balanced loss families
+        // carry expected unit weight, giving a clipping scale of 3 / 2.
+        XCTAssertEqual(batch.validCount, 1)
+        XCTAssertEqual(batch.gradientWeightScale, 1.5, accuracy: 1e-6)
+        let legacy = PolicyLoss.ActionBalance(frequencies: dataset.stateFrequencies)
+        XCTAssertEqual(try TrainingBatch.load(plan: plan, configuration: c, stage: .imitation,
+            actionBalance: legacy, checkCancellation: {}).gradientWeightScale, 1)
+        XCTAssertEqual(try TrainingBatch.load(plan: plan, configuration: c, stage: .pretraining,
+            actionBalance: balanced, checkCancellation: {}).gradientWeightScale, 1)
+    }
+
+    func testWeightedClippingRetainsImportanceInAdamMoments() throws {
+        func moments(importance: Float) throws -> [String: MLXArray] {
+            let model = Linear(1, 1, bias: false), optimizer = ResumableAdamW(learningRate: 0.001, weightDecay: 0)
+            let gradients = ModuleParameters.unflattened([("weight", MLXArray([10 * importance], [1, 1]))])
+            _ = optimizer.update(model: model, gradients: gradients, clip: importance)
+            return optimizer.arrays()
+        }
+        let ordinary = try moments(importance: 1), rare = try moments(importance: 4)
+        XCTAssertEqual(try XCTUnwrap(rare["first.weight"]).item(Float.self),
+                       try XCTUnwrap(ordinary["first.weight"]).item(Float.self) * 4, accuracy: 1e-6)
+        XCTAssertEqual(try XCTUnwrap(rare["second.weight"]).item(Float.self),
+                       try XCTUnwrap(ordinary["second.weight"]).item(Float.self) * 16, accuracy: 1e-6)
+    }
+
+    func testRotatedScheduleWarmsOnlyPastAndResetsAtWrap() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let indexes = try (0..<19).map { index in
+            IndexedRecording(item: try recording(root: root), examplesURL: root, offsetsURL: root, count: (index % 4 + 2) * 3)
+        }
+        let schedule = SequenceSchedule(recordings: indexes, batchSize: 1, sequenceLength: 3, seed: 42, interleaved: true, rotated: true)
+        var chunks: [Int: [Int]] = [:], pending: Set<Int> = []
+        XCTAssertTrue(schedule.groupStarts.contains { $0 > 0 })
+        for cursor in 0..<schedule.count {
+            XCTAssertEqual(Set(schedule.pendingMemoryGroups(at: cursor)), pending)
+            let plan = try XCTUnwrap(schedule.plan(at: cursor)), group = plan.memoryGroup
+            let expected = (schedule.groupStarts[group] + plan.sequencePosition) % schedule.groupSteps[group]
+            XCTAssertEqual(plan.chunk, expected)
+            XCTAssertEqual(plan.warmupChunks, plan.sequencePosition == 0 ? plan.chunk : 0)
+            XCTAssertEqual(plan.resetsMemory, plan.chunk == 0)
+            chunks[group, default: []].append(plan.chunk)
+            if plan.endsMemory { pending.remove(group) } else { pending.insert(group) }
+            XCTAssertLessThanOrEqual(pending.count, SequenceSchedule.maximumActiveGroups)
+        }
+        for group in schedule.groups.indices { XCTAssertEqual(chunks[group]?.sorted(), Array(0..<schedule.groupSteps[group])) }
+        XCTAssertTrue(pending.isEmpty)
+    }
+
+    func testPointerFilterChangesImitationFingerprintButNotPretraining() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let item = try recording(root: root), c = configuration()
+        var settings = TrainingSettings()
+        func prepare(_ name: String, stage: TrainingStage) throws -> PreparedDataset {
+            try PreparedDataset.prepare(items: [item], configuration: c, settings: settings, stage: stage,
+                root: root.appendingPathComponent(name), checkCancellation: {}, progress: { _ in })
+        }
+        let unfiltered = try prepare("unfiltered", stage: .imitation), pretraining = try prepare("pretraining", stage: .pretraining)
+        settings.ignoresPointerMovement = true
+        XCTAssertNotEqual(try prepare("filtered", stage: .imitation).fingerprint, unfiltered.fingerprint)
+        XCTAssertEqual(try prepare("same-pretraining", stage: .pretraining).fingerprint, pretraining.fingerprint)
+        let pointerFiltered = try prepare("pointer-filtered", stage: .imitation)
+        settings.ignoresKeyRepeats = true
+        XCTAssertNotEqual(try prepare("both-filtered", stage: .imitation).fingerprint, pointerFiltered.fingerprint)
+        XCTAssertEqual(try prepare("same-repeat-pretraining", stage: .pretraining).fingerprint, pretraining.fingerprint)
+    }
+
+    func testPointerFilterMasksMovementWithoutChangingVocabularyOrOtherControls() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let item = try recording(root: root)
+        var c = configuration(); c.capabilities.relativePointer = true
+        var settings = TrainingSettings(); settings.ignoresPointerMovement = true; settings.ignoresKeyRepeats = true
+        let allowed = settings.imitationCapabilities(c.capabilities)
+        XCTAssertEqual(allowed.keys, c.capabilities.keys)
+        XCTAssertEqual(allowed.buttons, c.capabilities.buttons)
+        XCTAssertEqual(allowed.scrolling, c.capabilities.scrolling)
+        let dataset = try PreparedDataset.prepare(items: [item], configuration: c, settings: settings, stage: .imitation,
+            root: root.appendingPathComponent("index"), checkCancellation: {}, progress: { _ in })
+        let batch = try TrainingBatch.load(plan: SequenceBatchPlan(recordings: dataset.training, chunk: 0),
+            configuration: c, stage: .imitation, capabilities: allowed, checkCancellation: {})
+        let codec = PolicyActionCodec(capabilities: c.capabilities), mask = batch.arrays[BatchField.actionMask.rawValue][0, 0]
+        XCTAssertEqual(mask.size, codec.count)
+        for action in [ComputerAction.pointer(x: 0, y: 0), .relativePointer(dx: 0, dy: 0)] {
+            XCTAssertLessThan(mask[try XCTUnwrap(codec.token(for: action))].item(Float.self), -1e8)
+        }
+        let key = try XCTUnwrap(codec.token(for: .keyDown(code: 0)))
+        XCTAssertEqual(mask[key].item(Float.self), 0)
+        let repeatToken = try XCTUnwrap(codec.token(for: .keyRepeat(code: 0)))
+        XCTAssertLessThan(batch.arrays[BatchField.actionMask.rawValue][0, 1, repeatToken].item(Float.self), -1e8)
+        var held = InputState(); held.keys.insert(0)
+        XCTAssertEqual(codec.mask(state: held, capabilities: c.capabilities)[repeatToken], 0)
+        XCTAssertEqual(TrainingSettings().imitationCapabilities(c.capabilities), c.capabilities)
+    }
+
+    func testInterleavedResumeRejectsMissingCarryFromAnotherGroup() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let items = try (0..<7).map { _ in try recording(root: root) }
+        var model = AIModel(name: "Carry integrity"); model.configuration = configuration()
+        var settings = TrainingSettings(); settings.epochs = 1; settings.batchSize = 1
+        let preferences = AppPreferences.defaults(at: root), control = TrainingControl(), progress = ProgressCollector()
+        let request = TrainingRequest(model: model, settings: settings, stage: .imitation, items: items, preferences: preferences, resume: false)
+        TrainingWorker.run(request, control: control, publish: { p in
+            progress.append(p); if p.phase == .training && p.step == 9 { control.set(.pause) }
+        }, checkpointSaved: { _ in })
+        XCTAssertEqual(progress.last?.phase, .paused)
+        let store = CheckpointStore(root: URL(fileURLWithPath: preferences.checkpointsPath))
+        let (saved, directory) = try XCTUnwrap(store.latest(modelID: model.id, stage: .imitation, configuration: model.configuration))
+        var state = try MLX.loadArrays(url: directory.appendingPathComponent("optimizer.safetensors"))
+        let carry = try XCTUnwrap(state.keys.first { $0.hasPrefix("carry.") })
+        state.removeValue(forKey: carry)
+        var missing = saved; missing.id = UUID()
+        _ = try store.save(missing, isBest: false) { url in
+            try FileManager.default.copyItem(at: directory.appendingPathComponent("weights.safetensors"), to: url.appendingPathComponent("weights.safetensors"))
+            try MLX.save(arrays: state, url: url.appendingPathComponent("optimizer.safetensors"))
+        }
+        let resumed = ProgressCollector()
+        TrainingWorker.run(TrainingRequest(model: model, settings: settings, stage: .imitation, items: items, preferences: preferences, resume: true),
+            control: TrainingControl(), publish: resumed.append, checkpointSaved: { _ in })
+        XCTAssertEqual(resumed.last?.phase, .failed)
+        XCTAssertTrue(resumed.last?.message.contains("temporal state") ?? false)
+    }
+
+    func testInterleavingPreservesOrderCoverageAndBoundedMemory() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let indexes = try (0..<19).map { index in
+            IndexedRecording(item: try recording(root: root), examplesURL: root, offsetsURL: root, count: (index % 4 + 1) * 3)
+        }
+        let schedule = SequenceSchedule(recordings: indexes, batchSize: 1, sequenceLength: 3, seed: 42, interleaved: true)
+        var chunks: [UUID: [Int]] = [:], pending: Set<Int> = []
+        for cursor in 0..<schedule.count {
+            XCTAssertEqual(Set(schedule.pendingMemoryGroups(at: cursor)), pending)
+            let plan = try XCTUnwrap(schedule.plan(at: cursor))
+            for recording in plan.recordings { chunks[recording.item.id, default: []].append(plan.chunk) }
+            if plan.endsMemory { pending.remove(plan.memoryGroup) } else { pending.insert(plan.memoryGroup) }
+            XCTAssertLessThanOrEqual(pending.count, SequenceSchedule.maximumActiveGroups)
+        }
+        XCTAssertTrue(pending.isEmpty)
+        for recording in indexes { XCTAssertEqual(chunks[recording.item.id], Array(0..<(recording.count / 3))) }
+        XCTAssertNil(schedule.plan(at: -1)); XCTAssertNil(schedule.plan(at: schedule.count))
+        XCTAssertTrue(schedule.pendingMemoryGroups(at: schedule.count).isEmpty)
+        let firstGroups = (0..<8).compactMap { schedule.plan(at: $0)?.memoryGroup }
+        XCTAssertEqual(firstGroups, Array(0..<8))
+    }
+
     func testBalanceWeightsUseTrainingSplitAndReachEveryBatch() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -382,5 +631,35 @@ extension TrainingPipelineTests {
         XCTAssertEqual(weights[0], balance.forState(InputState()).inputWeight)
         XCTAssertEqual(weights[2], balance.forState(InputState(keys: [0])).inputWeight)
         XCTAssertGreaterThan(weights[0], 0)
+    }
+}
+
+extension TrainingPipelineTests {
+    func testKeyboardBatchNeutralizesCursorAndKeepsRecordedState() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let item = try recording(root: root)
+        var c = configuration(); c.detailCrop = true
+        var settings = TrainingSettings(); settings.ignoresPointerMovement = true; settings.validationFraction = 0
+        let data = try PreparedDataset.prepare(items: [item], configuration: c, settings: settings, stage: .imitation,
+            root: root.appendingPathComponent("keyboard"), checkCancellation: {}, progress: { _ in })
+        let plan = SequenceBatchPlan(recordings: data.training, chunk: 0)
+        let keyboard = try TrainingBatch.load(plan: plan, configuration: c, stage: .imitation, cursorIndependent: true, checkCancellation: {})
+        let legacy = try TrainingBatch.load(plan: plan, configuration: c, stage: .imitation, checkCancellation: {})
+        let context = keyboard.arrays[BatchField.context.rawValue]
+        XCTAssertEqual(context[0, 0, 133].item(Float.self), 0.5)
+        XCTAssertEqual(context[0, 0, 134].item(Float.self), 0.5)
+        XCTAssertEqual(sum(abs(keyboard.arrays[BatchField.crops.rawValue])).item(Float.self), 0)
+        XCTAssertGreaterThan(sum(abs(legacy.arrays[BatchField.crops.rawValue])).item(Float.self), 0)
+        XCTAssertEqual(try data.training[0].examples(start: 0, count: 1)[0].state.cursorX, 0)
+        var old = settings; old.cursorIndependentKeys = nil
+        let legacyData = try PreparedDataset.prepare(items: [item], configuration: c, settings: old, stage: .imitation,
+            root: root.appendingPathComponent("legacy"), checkCancellation: {}, progress: { _ in })
+        XCTAssertNotEqual(data.fingerprint, legacyData.fingerprint)
+        let raw = try PreparedDataset.prepare(items: [item], configuration: c, settings: settings, stage: .pretraining,
+            root: root.appendingPathComponent("raw"), checkCancellation: {}, progress: { _ in })
+        let oldRaw = try PreparedDataset.prepare(items: [item], configuration: c, settings: old, stage: .pretraining,
+            root: root.appendingPathComponent("oldRaw"), checkCancellation: {}, progress: { _ in })
+        XCTAssertEqual(raw.fingerprint, oldRaw.fingerprint)
     }
 }

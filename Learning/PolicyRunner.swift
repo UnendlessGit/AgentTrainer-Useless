@@ -35,13 +35,16 @@ final class PolicyRunner {
     private let codec: PolicyActionCodec
     private let permissions: ActionCapabilities
     private let hierarchical: Bool
+    private let cursorIndependent: Bool
     private(set) var memory = MemoryState()
     private var pendingMemory: MemoryState?
     private let instruction: MLXArray
 
-    init(model: PolicyNetwork, permissions: ActionCapabilities, instruction: String, hierarchical: Bool = false) throws {
+    init(model: PolicyNetwork, permissions: ActionCapabilities, instruction: String, hierarchical: Bool = false,
+         cursorIndependent: Bool = false) throws {
         self.model = model; self.permissions = permissions
         self.hierarchical = hierarchical
+        self.cursorIndependent = cursorIndependent
         codec = PolicyActionCodec(capabilities: model.configuration.capabilities)
         self.instruction = MLXArray(try ObservationPreprocessor.instruction(model.configuration.instructionConditioning ? instruction : ""),
                                     [1, 1, PolicyNetwork.instructionLength])
@@ -52,14 +55,15 @@ final class PolicyRunner {
         pendingMemory = nil
         let start = ProcessInfo.processInfo.systemUptime, c = model.configuration
         let image = try ObservationPreprocessor.pixels(scene.image, size: c.imageSize).reshaped([1, 1, c.imageSize, c.imageSize, 3])
-        let crop = c.detailCrop ? try ObservationPreprocessor.detailCrop(scene.image, state: state, bounds: scene.bounds, size: c.imageSize)
+        let crop = c.detailCrop && !cursorIndependent ? try ObservationPreprocessor.detailCrop(scene.image, state: state, bounds: scene.bounds, size: c.imageSize)
             .reshaped([1, 1, c.imageSize, c.imageSize, 3]) : MLXArray.zeros([1, 1, c.imageSize, c.imageSize, 3])
-        let context = MLXArray(ObservationPreprocessor.context(state: state, bounds: scene.bounds, previousAction: previousAction,
+        let modelState = ObservationPreprocessor.modelState(state, bounds: scene.bounds, cursorIndependent: cursorIndependent)
+        let context = MLXArray(ObservationPreprocessor.context(state: modelState, bounds: scene.bounds, previousAction: previousAction,
             elapsed: elapsed, sourceAge: sourceAge), [1, 1, PolicyNetwork.contextSize])
         let previous = MLXArray(Int32(codec.token(for: previousAction) ?? codec.count)).reshaped([1, 1])
         let output = model(images: image, crops: c.detailCrop ? crop : nil, context: context, previousActions: previous,
             instructions: instruction, dynamicsActions: MLXArray.zeros([1, 1], type: Int32.self),
-            dynamicsArguments: MLXArray.zeros([1, 1, 2]), hidden: memory.hidden)
+            dynamicsArguments: MLXArray.zeros([1, 1, 2]), hidden: memory.hidden, wholeSceneDetail: cursorIndependent)
         let last = 0
         let logits = output.actionLogits[0, last] + MLXArray(codec.mask(state: state, capabilities: permissions))
         func choose(_ logits: MLXArray) -> MLXArray {
