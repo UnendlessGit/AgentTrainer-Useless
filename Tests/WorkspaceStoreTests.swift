@@ -2,6 +2,38 @@ import XCTest
 @testable import AgentTrainer
 
 @MainActor final class WorkspaceStoreTests: XCTestCase {
+    func testFailedLibraryLoadBlocksOverwritingMetadataAndCanRecover() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = WorkspaceStore(supportURL: root)
+        await original.load()
+        let folder = try original.createFolder(name: "Preserved library", kind: .imitation)
+        let model = try original.createModel(name: "Preserved model")
+        let foldersURL = original.recordingRoot.appendingPathComponent("folders.json")
+        let modelURL = original.modelRoot.appendingPathComponent(model.id.uuidString + ".json")
+        let validFolders = try Data(contentsOf: foldersURL), validModel = try Data(contentsOf: modelURL)
+        let unreadable = Data("{\"incomplete library\":".utf8)
+        try unreadable.write(to: foldersURL)
+        let store = WorkspaceStore(supportURL: root)
+        await store.load()
+        XCTAssertFalse(store.canAccessWorkspace)
+        XCTAssertNotNil(store.workspaceFailure)
+        XCTAssertFalse(store.loading)
+        store.error = nil // Dismissing the alert must not enable writes.
+        XCTAssertThrowsError(try store.createFolder(name: "Must not replace folders", kind: .imitation))
+        XCTAssertThrowsError(try store.createModel(name: "Must not write a model"))
+        XCTAssertThrowsError(try store.deleteFolder(folder))
+        XCTAssertEqual(try Data(contentsOf: foldersURL), unreadable)
+        XCTAssertEqual(try Data(contentsOf: modelURL), validModel)
+        try validFolders.write(to: foldersURL)
+        await store.load()
+        XCTAssertTrue(store.canAccessWorkspace)
+        XCTAssertNil(store.workspaceFailure)
+        XCTAssertTrue(store.folders.contains(where: { $0.id == folder.id }))
+        XCTAssertTrue(store.models.contains(where: { $0.id == model.id }))
+        XCTAssertNoThrow(try store.createFolder(name: "After repair", kind: .imitation))
+    }
+
     func testWindowReloadCannotRecoverJournalsDuringStorageMigration() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

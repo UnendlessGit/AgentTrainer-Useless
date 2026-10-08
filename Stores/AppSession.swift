@@ -46,6 +46,12 @@ final class AppSession {
         store.perform { try store.requireWritable(); try AtomicFile.encode(recordingForm, to: store.supportURL.appendingPathComponent("recording-form.json")) }
     }
 
+    func loadWorkspace() async {
+        await store.load()
+        recorder.permissions.refresh()
+        installShortcuts()
+    }
+
     func installShortcuts() {
         guard !unitTestHost, store.canAccessWorkspace, !shortcutsInstalled else { return }
         shortcuts.onAction = { [weak self] action in

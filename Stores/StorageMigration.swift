@@ -54,6 +54,7 @@ extension WorkspaceStore {
         updated[keyPath: keyPath] = destination.path
         try savePreferences(updated)
         await load(afterMigration: true)
+        if let failure = workspaceFailure { throw DataIntegrityError.io(failure) }
         notice = "Storage updated. The original data remains at \(source.path)."
     }
 }

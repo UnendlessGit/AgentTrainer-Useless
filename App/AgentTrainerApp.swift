@@ -10,7 +10,7 @@ struct AgentTrainerApp: App {
             ContentView(session: session)
                 .frame(minWidth: 1050, minHeight: 720)
                 .preferredColorScheme(session.store.preferences.appearance == "Dark" ? .dark : session.store.preferences.appearance == "Light" ? .light : nil)
-                .task { delegate.session = session; await session.store.load(); session.recorder.permissions.refresh(); session.installShortcuts() }
+                .task { delegate.session = session; await session.loadWorkspace() }
         }
         .defaultSize(width: 1320, height: 860)
         .commands {

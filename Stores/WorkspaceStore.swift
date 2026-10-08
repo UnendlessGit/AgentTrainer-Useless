@@ -13,7 +13,8 @@ final class WorkspaceStore {
     var error: String?
     var notice: String?
     private var preferencesFailure: String?
-    var canAccessWorkspace: Bool { preferencesFailure == nil && !loading }
+    private(set) var workspaceFailure: String?
+    var canAccessWorkspace: Bool { preferencesFailure == nil && workspaceFailure == nil && !loading }
 
     let supportURL: URL
     private var preferencesURL: URL { supportURL.appendingPathComponent("preferences.json") }
@@ -45,7 +46,8 @@ final class WorkspaceStore {
     func load(afterMigration: Bool = false) async {
         // Loading also recovers interrupted journals and checkpoint pointers.
         // Never let a new window start that work against a source being copied.
-        guard canAccessWorkspace, !migrating || afterMigration, activeOperations.isEmpty else { return }
+        // A failed load may be retried after the underlying file is repaired.
+        guard preferencesFailure == nil, !loading, !migrating || afterMigration, activeOperations.isEmpty else { return }
         loading = true
         defer { loading = false }
         let recordingRoot = recordingRoot, modelRoot = modelRoot
@@ -57,7 +59,8 @@ final class WorkspaceStore {
                 let foldersURL = recordingRoot.appendingPathComponent("folders.json")
                 let folders: [LibraryFolder]
                 if FileManager.default.fileExists(atPath: foldersURL.path) {
-                    folders = try AtomicFile.decode([LibraryFolder].self, from: foldersURL)
+                    do { folders = try AtomicFile.decode([LibraryFolder].self, from: foldersURL) }
+                    catch { throw DataIntegrityError.invalidData("Could not read Library folders at \(foldersURL.path): \(error.localizedDescription)") }
                 } else {
                     folders = [LibraryFolder(name: "My demonstrations", kind: .imitation), LibraryFolder(name: "World observations", kind: .pretraining)]
                     try AtomicFile.encode(folders, to: foldersURL)
@@ -103,8 +106,12 @@ final class WorkspaceStore {
                 return (folders, recordings.sorted { $0.manifest.createdAt > $1.manifest.createdAt }, models.sorted { $0.createdAt < $1.createdAt }, issues)
             }.value
             folders = result.0; recordings = result.1; models = result.2
+            workspaceFailure = nil
             if !result.3.isEmpty { error = "Some data needs attention:\n" + result.3.joined(separator: "\n") }
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            let message = "The workspace could not be loaded. Original files are preserved and workspace changes are disabled. Fix the reported issue, then retry.\n\n\(error.localizedDescription)"
+            workspaceFailure = message; self.error = message
+        }
     }
 
     func upsertRecording(_ manifest: RecordingManifest, url: URL) {
@@ -279,6 +286,7 @@ final class WorkspaceStore {
 
     func requireWritable() throws {
         if let preferencesFailure { throw DataIntegrityError.io(preferencesFailure) }
+        if let workspaceFailure { throw DataIntegrityError.io(workspaceFailure) }
         guard !loading else { throw DataIntegrityError.io("Wait for the workspace to finish loading before making changes.") }
         guard !migrating else { throw DataIntegrityError.io("Wait for the storage move to finish before changing the workspace.") }
     }

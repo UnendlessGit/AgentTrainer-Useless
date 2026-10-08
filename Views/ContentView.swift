@@ -41,11 +41,18 @@ struct ContentView: View {
                 case .settings: SettingsView(session: session)
                 }
             }
-            .disabled(session.store.loading)
+            .disabled(session.store.loading || session.store.workspaceFailure != nil)
             .background(.background.opacity(0.6))
             .overlay {
                 if session.store.loading {
                     ProgressView("Loading workspace…").padding(24).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                } else if let failure = session.store.workspaceFailure {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Label("Workspace unavailable", systemImage: "exclamationmark.triangle").font(.headline)
+                        Text(failure).textSelection(.enabled)
+                        Button("Retry loading") { Task { await session.loadWorkspace() } }
+                            .buttonStyle(.borderedProminent)
+                    }.padding(24).frame(maxWidth: 520).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
