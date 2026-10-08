@@ -2,7 +2,7 @@
 
 A native macOS workspace for learning computer interaction from demonstrations. Recording, pretraining, imitation learning and execution run locally with SwiftUI, ScreenCaptureKit and MLX on Apple Silicon.
 
-Development is ongoing. The [implementation ledger](docs/DEVELOPMENT.md) records observed behavior and remaining limits; [OBJECTIVE.md](docs/OBJECTIVE.md) contains the acceptance scope.
+The [implementation and final audit ledger](docs/DEVELOPMENT.md) records observed behavior and validation limits; [OBJECTIVE.md](docs/OBJECTIVE.md) contains the acceptance scope.
 
 ## Build and run
 
@@ -15,6 +15,8 @@ open build/Build/Products/Release/AgentTrainer.app
 ```
 
 The release build is optimized for arm64. Run the unit/runtime checks with `./script/build_and_run.sh --test`. The test host uses an isolated temporary workspace.
+
+Fresh-install MLX limits adapt to unified memory: 4 GB on an 8 GB Mac, 8 GB on a 16 GB Mac, and 12 GB on larger Macs. Settings shows the hardware recommendation and can restore it; existing saved limits remain unchanged. Resource changes apply to the next training job or run.
 
 ## Workflow
 

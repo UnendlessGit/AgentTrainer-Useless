@@ -9,10 +9,18 @@ struct AppPreferences: Codable, Sendable {
     var modelsPath: String
     var checkpointsPath: String
     var appearance = "System"
-    var memoryLimitGB = 12
-    var cacheLimitGB = 2
+    var memoryLimitGB = AppPreferences.recommendedLimits().memoryGB
+    var cacheLimitGB = AppPreferences.recommendedLimits().cacheGB
     var stopOnHumanInput = true
     var shortcuts: ShortcutBindings?
+
+    /// Leave at least half of unified memory available to macOS and the apps
+    /// being captured. Larger Macs start conservatively; saved choices survive.
+    static func recommendedLimits(physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory) -> (memoryGB: Int, cacheGB: Int) {
+        let budgetGB = min(12, physicalMemory / 1_073_741_824 / 2)
+        let memoryGB = memoryLimitsGB.last(where: { UInt64($0) <= budgetGB }) ?? memoryLimitsGB[0]
+        return (memoryGB, memoryGB <= 4 ? 1 : 2)
+    }
 
     func validateStorage() throws {
         guard schemaVersion == 1 else { throw DataIntegrityError.invalidData("This preferences version is not supported.") }
@@ -44,8 +52,8 @@ struct AppPreferences: Codable, Sendable {
     mutating func repairOptionalSettings() -> [String] {
         var repaired: [String] = []
         if !Self.appearances.contains(appearance) { appearance = "System"; repaired.append("appearance") }
-        if !Self.memoryLimitsGB.contains(memoryLimitGB) { memoryLimitGB = 12; repaired.append("MLX memory limit") }
-        if !Self.cacheLimitsGB.contains(cacheLimitGB) { cacheLimitGB = 2; repaired.append("MLX cache limit") }
+        if !Self.memoryLimitsGB.contains(memoryLimitGB) { memoryLimitGB = Self.recommendedLimits().memoryGB; repaired.append("MLX memory limit") }
+        if !Self.cacheLimitsGB.contains(cacheLimitGB) { cacheLimitGB = Self.recommendedLimits().cacheGB; repaired.append("MLX cache limit") }
         do { try shortcuts?.validate() }
         catch { shortcuts = nil; repaired.append("keyboard shortcuts") }
         return repaired

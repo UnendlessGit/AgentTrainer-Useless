@@ -6,11 +6,19 @@ struct AgentTrainerApp: App {
     @Environment(\.openWindow) private var openWindow
     @State private var session = AppSession()
 
+    private var preferredColorScheme: ColorScheme? {
+        switch session.store.preferences.appearance {
+        case "Dark": .dark
+        case "Light": .light
+        default: nil
+        }
+    }
+
     var body: some Scene {
         Window("AgentTrainer", id: "main") {
             ContentView(session: session)
                 .frame(minWidth: 1050, minHeight: 720)
-                .preferredColorScheme(session.store.preferences.appearance == "Dark" ? .dark : session.store.preferences.appearance == "Light" ? .light : nil)
+                .preferredColorScheme(preferredColorScheme)
                 .task { delegate.session = session; await session.loadWorkspace() }
         }
         .defaultLaunchBehavior(.presented)
@@ -32,7 +40,10 @@ struct AgentTrainerApp: App {
                 }
             }
         }
-        Settings { SettingsView(session: session).frame(width: 760, height: 700) }
+        Settings {
+            SettingsView(session: session).frame(width: 760, height: 700)
+                .preferredColorScheme(preferredColorScheme)
+        }
     }
 }
 

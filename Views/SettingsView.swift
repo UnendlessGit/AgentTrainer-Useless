@@ -37,6 +37,14 @@ struct SettingsView: View {
                     Picker("Appearance", selection: preference(\.appearance)) { ForEach(AppPreferences.appearances, id: \.self) { Text($0).tag($0) } }.frame(maxWidth: 380)
                     Picker("MLX memory limit", selection: preference(\.memoryLimitGB)) { ForEach(AppPreferences.memoryLimitsGB, id: \.self) { Text("\($0) GB").tag($0) } }.frame(maxWidth: 380)
                     Picker("MLX cache limit", selection: preference(\.cacheLimitGB)) { ForEach(AppPreferences.cacheLimitsGB, id: \.self) { Text("\($0) GB").tag($0) } }.frame(maxWidth: 380)
+                    let recommended = AppPreferences.recommendedLimits()
+                    Text("This Mac has \(ProcessInfo.processInfo.physicalMemory / 1_073_741_824) GB of unified memory. Recommended limits: \(recommended.memoryGB) GB memory and \(recommended.cacheGB) GB cache. Changes apply to the next training job or run.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Use recommended limits") {
+                        var updated = store.preferences
+                        updated.memoryLimitGB = recommended.memoryGB; updated.cacheLimitGB = recommended.cacheGB
+                        store.perform { try store.savePreferences(updated) }
+                    }.disabled(store.preferences.memoryLimitGB == recommended.memoryGB && store.preferences.cacheLimitGB == recommended.cacheGB)
                     Toggle("Stop runs on human input", isOn: Binding(
                         get: { session.runner.configuration.stopOnHumanInput },
                         set: { enabled in store.perform { try session.runner.setHumanInputPolicy(enabled) } }

@@ -2,6 +2,20 @@ import XCTest
 @testable import AgentTrainer
 
 final class AppPreferencesTests: XCTestCase {
+    func testResourceRecommendationsScaleToHardwareWithoutReplacingSavedChoices() throws {
+        for (ramGB, memoryGB, cacheGB) in [(8, 4, 1), (16, 8, 2), (24, 12, 2), (36, 12, 2), (64, 12, 2)] {
+            let limits = AppPreferences.recommendedLimits(physicalMemory: UInt64(ramGB) * 1_073_741_824)
+            XCTAssertEqual(limits.memoryGB, memoryGB)
+            XCTAssertEqual(limits.cacheGB, cacheGB)
+        }
+        var saved = AppPreferences.defaults(at: try fixture())
+        saved.memoryLimitGB = 24; saved.cacheLimitGB = 8
+        var reopened = try JSONDecoder().decode(AppPreferences.self, from: JSONEncoder().encode(saved))
+        XCTAssertTrue(reopened.repairOptionalSettings().isEmpty)
+        XCTAssertEqual(reopened.memoryLimitGB, 24)
+        XCTAssertEqual(reopened.cacheLimitGB, 8)
+    }
+
     private func fixture() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -23,8 +37,8 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(store.preferences.recordingsPath, saved.recordingsPath)
         XCTAssertEqual(store.preferences.modelsPath, saved.modelsPath)
         XCTAssertEqual(store.preferences.checkpointsPath, saved.checkpointsPath)
-        XCTAssertEqual(store.preferences.memoryLimitGB, 12)
-        XCTAssertEqual(store.preferences.cacheLimitGB, 2)
+        XCTAssertEqual(store.preferences.memoryLimitGB, AppPreferences.recommendedLimits().memoryGB)
+        XCTAssertEqual(store.preferences.cacheLimitGB, AppPreferences.recommendedLimits().cacheGB)
         XCTAssertNotNil(store.notice)
         XCTAssertEqual(try Data(contentsOf: url), original)
     }
@@ -70,7 +84,7 @@ final class AppPreferencesTests: XCTestCase {
         var invalid = store.preferences; invalid.memoryLimitGB = Int.max
         XCTAssertThrowsError(try store.savePreferences(invalid))
         XCTAssertEqual(try Data(contentsOf: url), original)
-        XCTAssertEqual(store.preferences.memoryLimitGB, 12)
+        XCTAssertEqual(store.preferences.memoryLimitGB, AppPreferences.recommendedLimits().memoryGB)
     }
 
     @MainActor func testHumanInputSettingUpdatesTheSavedRunPolicyAndPreservesOtherControls() throws {
