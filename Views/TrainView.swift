@@ -9,51 +9,67 @@ struct TrainView: View {
 
     var body: some View {
         @Bindable var trainer = trainer
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                PageHeader(title: "Train", subtitle: "Turn demonstrations into understanding, on your Mac.") {
-                    StatusPill(title: trainer.progress.modelID == trainer.selectedModelID ? trainer.progress.phase.rawValue : "Ready",
-                               color: trainer.isBusy ? .blue : .secondary)
-                }
-                Surface(title: "Training model", symbol: "cpu") {
-                    Picker("Model", selection: $trainer.selectedModelID) {
-                        Text("Select a model").tag(nil as UUID?)
-                        ForEach(store.models) { Text($0.name).tag(Optional($0.id)) }
-                    }.disabled(trainer.isBusy)
-                    if let model { Text(model.compatibility).font(.caption).foregroundStyle(.secondary) }
-                }
-                HStack(alignment: .top, spacing: 20) {
-                    stageCard(.pretraining, title: "1. Pre-train", symbol: "sparkles", description: "Learn how visual environments change in response to actions.")
-                    stageCard(.imitation, title: "2. Train", symbol: "waveform.path", description: "Learn demonstrated actions, pointer locations and timing.")
-                }
-                if trainer.isBusy || trainer.progress.phase != .idle { progressPanel }
-                Surface(title: "Training settings", symbol: "slider.horizontal.3") {
-                    HStack(alignment: .top, spacing: 30) {
-                        VStack(alignment: .leading, spacing: 14) {
-                            Stepper("Epochs: \(trainer.settings.epochs)", value: $trainer.settings.epochs, in: 1...1000)
-                            Picker("Batch size", selection: $trainer.settings.batchSize) { ForEach([1, 2, 4, 8], id: \.self) { Text("\($0) sequences").tag($0) } }
-                            TextField("Learning rate", value: $trainer.settings.learningRate, format: .number.precision(.fractionLength(1...6)))
-                                .accessibilityLabel("Learning rate").accessibilityIdentifier("training.learningRate")
-                            TextField("Weight decay", value: $trainer.settings.weightDecay, format: .number.precision(.fractionLength(0...4)))
-                                .accessibilityLabel("Weight decay").accessibilityIdentifier("training.weightDecay")
-                        }
-                        VStack(alignment: .leading, spacing: 14) {
-                            TextField("Gradient clip", value: $trainer.settings.gradientClip, format: .number)
-                                .accessibilityLabel("Gradient clip").accessibilityIdentifier("training.gradientClip")
-                            Stepper("Checkpoint every \(trainer.settings.checkpointInterval) steps", value: $trainer.settings.checkpointInterval, in: 1...1000)
-                            Picker("Held-out recordings", selection: $trainer.settings.validationFraction) {
-                                Text("None · training loss only").tag(0.0); Text("20%").tag(0.2); Text("30%").tag(0.3)
+        ScrollViewReader { scroll in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    PageHeader(title: "Train", subtitle: "Turn demonstrations into understanding, on your Mac.") {
+                        StatusPill(title: trainer.progress.modelID == trainer.selectedModelID ? trainer.progress.phase.rawValue : "Ready",
+                                   color: trainer.isBusy ? .blue : .secondary)
+                    }
+                    Surface(title: "Training model", symbol: "cpu") {
+                        Picker("Model", selection: $trainer.selectedModelID) {
+                            Text("Select a model").tag(nil as UUID?)
+                            ForEach(store.models) { Text($0.name).tag(Optional($0.id)) }
+                        }.disabled(trainer.isBusy)
+                        if let model { Text(model.compatibility).font(.caption).foregroundStyle(.secondary) }
+                    }
+                    HStack(alignment: .top, spacing: 20) {
+                        stageCard(.pretraining, title: "1. Pre-train", symbol: "sparkles", description: "Learn how visual environments change in response to actions.")
+                        stageCard(.imitation, title: "2. Train", symbol: "waveform.path", description: "Learn demonstrated actions, pointer locations and timing.")
+                    }
+                    if trainer.isBusy || trainer.progress.phase != .idle { progressPanel.id("training-activity") }
+                    Surface(title: "Training settings", symbol: "slider.horizontal.3") {
+                        HStack(alignment: .top, spacing: 30) {
+                            VStack(alignment: .leading, spacing: 14) {
+                                Stepper("Epochs: \(trainer.settings.epochs)", value: $trainer.settings.epochs, in: 1...1000)
+                                Picker("Batch size", selection: $trainer.settings.batchSize) { ForEach([1, 2, 4, 8], id: \.self) { Text("\($0) sequences").tag($0) } }
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text("Learning rate").font(.caption).foregroundStyle(.secondary)
+                                    TextField("Learning rate", value: $trainer.settings.learningRate, format: .number.precision(.fractionLength(1...6)))
+                                        .accessibilityLabel("Learning rate").accessibilityIdentifier("training.learningRate")
+                                }
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text("Weight decay").font(.caption).foregroundStyle(.secondary)
+                                    TextField("Weight decay", value: $trainer.settings.weightDecay, format: .number.precision(.fractionLength(0...4)))
+                                        .accessibilityLabel("Weight decay").accessibilityIdentifier("training.weightDecay")
+                                }
                             }
-                            Stepper("Run budget: \(trainer.settings.maximumRunMinutes) min", value: $trainer.settings.maximumRunMinutes, in: 1...30)
-                        }
-                    }.disabled(trainer.isBusy)
-                    Toggle("Balance input choices against waits", isOn: $trainer.settings.balancesInputChoices).disabled(trainer.isBusy)
-                    Text("Keeps the recorded wait/input frequency while giving rarer input choices more training weight. Applies to imitation learning.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text("Validation uses separate recordings. With one recording, no validation score is reported. A run pauses at its time budget; Resume restores its data split, optimizer and memory.")
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            VStack(alignment: .leading, spacing: 14) {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text("Gradient clip").font(.caption).foregroundStyle(.secondary)
+                                    TextField("Gradient clip", value: $trainer.settings.gradientClip, format: .number)
+                                        .accessibilityLabel("Gradient clip").accessibilityIdentifier("training.gradientClip")
+                                }
+                                Stepper("Checkpoint every \(trainer.settings.checkpointInterval) steps", value: $trainer.settings.checkpointInterval, in: 1...1000)
+                                Picker("Held-out recordings", selection: $trainer.settings.validationFraction) {
+                                    Text("None · training loss only").tag(0.0); Text("20%").tag(0.2); Text("30%").tag(0.3)
+                                }
+                                Stepper("Run budget: \(trainer.settings.maximumRunMinutes) min", value: $trainer.settings.maximumRunMinutes, in: 1...30)
+                            }
+                        }.disabled(trainer.isBusy)
+                        Toggle("Balance input choices against waits", isOn: $trainer.settings.balancesInputChoices).disabled(trainer.isBusy)
+                        Text("Keeps the recorded wait/input frequency while giving rarer input choices more training weight. Applies to imitation learning.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text("Validation uses separate recordings. With one recording, no validation score is reported. A run pauses at its time budget; Resume restores its data split, optimizer and memory.")
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                }.padding(30)
+            }
+            .onChange(of: trainer.isBusy) { _, busy in
+                if busy {
+                    withAnimation { scroll.scrollTo("training-activity", anchor: .top) }
                 }
-            }.padding(30)
+            }
         }.task { if trainer.selectedModelID == nil { trainer.selectedModelID = store.models.first?.id } }
         .onDisappear { trainer.saveSettings() }
     }

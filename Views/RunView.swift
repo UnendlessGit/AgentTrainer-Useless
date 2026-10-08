@@ -79,7 +79,14 @@ struct RunView: View {
                                 Text("Select a trained model").tag(nil as UUID?)
                                 ForEach(session.store.models.filter(\.canRun)) { Text($0.name).tag(Optional($0.id)) }
                             }
-                            TextField("Task instruction", text: $runner.configuration.instruction, axis: .vertical).lineLimit(2...4)
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text("Task instruction").font(.caption).foregroundStyle(.secondary)
+                                TextField("Task instruction", text: $runner.configuration.instruction, axis: .vertical).lineLimit(2...4)
+                                    .disabled(model?.configuration.instructionConditioning != true)
+                                if let model, !model.configuration.instructionConditioning {
+                                    Text("This model was trained without task instructions.").font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
                             Toggle("Use best validation checkpoint", isOn: $runner.configuration.useBestCheckpoint)
                             Text("Uses the latest checkpoint if no best checkpoint matches this configuration and dataset.").font(.caption).foregroundStyle(.secondary)
                             Toggle("Choose the most likely action", isOn: $runner.configuration.deterministic)
@@ -159,14 +166,21 @@ struct RunView: View {
             if runner.configuration.capture.target.kind == .region {
                 Toggle("Region of a window", isOn: $runner.configuration.capture.regionWindow)
                 HStack {
-                    TextField("X", value: $runner.configuration.capture.regionX, format: .number)
-                    TextField("Y", value: $runner.configuration.capture.regionY, format: .number)
-                    TextField("Width", value: $runner.configuration.capture.regionWidth, format: .number)
-                    TextField("Height", value: $runner.configuration.capture.regionHeight, format: .number)
+                    regionField("X", value: $runner.configuration.capture.regionX)
+                    regionField("Y", value: $runner.configuration.capture.regionY)
+                    regionField("Width", value: $runner.configuration.capture.regionWidth)
+                    regionField("Height", value: $runner.configuration.capture.regionHeight)
                 }
                 Text("Coordinates in points from the source's top-left corner.").font(.caption).foregroundStyle(.secondary)
             }
             if let error = runner.catalog.error { Text(error).font(.caption).foregroundStyle(.red) }
+        }
+    }
+
+    private func regionField(_ title: String, value: Binding<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            TextField(title, value: value, format: .number).accessibilityLabel(title)
         }
     }
 
