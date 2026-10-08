@@ -117,7 +117,7 @@ struct RunView: View {
                             Toggle("Dragging", isOn: $runner.configuration.permissions.dragging)
                             Toggle("Key combinations", isOn: $runner.configuration.permissions.chords)
                             Toggle("Repeated key events while held", isOn: $runner.configuration.permissions.repeatsKeys)
-                            ForEach(0...2, id: \.self) { button in
+                            ForEach(ActionCapabilities.supportedButtons, id: \.self) { button in
                                 Toggle(KeyNames.button(button), isOn: Binding(get: { runner.configuration.permissions.buttons.contains(button) }, set: {
                                     if $0 { runner.configuration.permissions.buttons.insert(button) } else { runner.configuration.permissions.buttons.remove(button) }
                                 }))

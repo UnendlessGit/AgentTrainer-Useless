@@ -27,6 +27,8 @@ The release build is optimized for arm64. Run the unit/runtime checks with `./sc
 
 Architecture or capability changes require retraining. Existing linear pretraining checkpoints retain compatibility; new models offer a spatial predictor that can learn localized action effects. Pretraining is optional and does not guarantee better task performance.
 
+AI Models and Run expose left, right, middle and auxiliary mouse buttons 4 and 5. Relative movement is a separate capability; enable it when your recordings use raw mouse deltas. Dragging retains the identity of the held button.
+
 Models with task conditioning accept instructions up to 96 UTF-8 bytes. The visible counter accounts for multibyte characters. Library preserves longer original instructions for editing; training and Run explain the limit instead of silently truncating them. Models without instruction conditioning ignore this text.
 
 **File → New recording** (Command N) opens the Record tab, including after you close the main window. The workspace uses one main window; Settings also has its native macOS window.

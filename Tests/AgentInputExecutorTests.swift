@@ -7,17 +7,38 @@ private final class CapturedInputEvents: @unchecked Sendable {
     private let lock = NSLock()
     private var events: [(CGEventType, Int64, UInt64, Int64, Int64)] = []
     private var media: [MediaKeyEvent.Transition] = []
+    private var mouse: [(CGEventType, Int64)] = []
     func append(_ event: CGEvent) {
         lock.withLock {
             events.append((event.type, event.getIntegerValueField(.keyboardEventKeycode), event.flags.rawValue, event.getIntegerValueField(.eventSourceUserData), event.getIntegerValueField(.keyboardEventAutorepeat)))
             if let transition = MediaKeyEvent.decode(event) { media.append(transition) }
+            if [.otherMouseDown, .otherMouseDragged, .otherMouseUp].contains(event.type) {
+                mouse.append((event.type, event.getIntegerValueField(.mouseEventButtonNumber)))
+            }
         }
     }
     var values: [(CGEventType, Int64, UInt64, Int64, Int64)] { lock.withLock { events } }
     var mediaValues: [MediaKeyEvent.Transition] { lock.withLock { media } }
+    var mouseValues: [(CGEventType, Int64)] { lock.withLock { mouse } }
 }
 
 final class AgentInputExecutorTests: XCTestCase {
+    func testAuxiliaryButtonsRetainIdentityDuringDragAndEmergencyRelease() throws {
+        let bounds = CaptureRect(CGRect(x: -10_000, y: -10_000, width: 20_000, height: 20_000))
+        for button in [3, 4] {
+            let events = CapturedInputEvents()
+            var capabilities = ActionCapabilities(); capabilities.buttons = [button]
+            let executor = AgentInputExecutor(capabilities: capabilities, emit: events.append)
+            try executor.execute(.buttonDown(button: button), bounds: bounds)
+            XCTAssertEqual(executor.state.buttons, [button])
+            try executor.execute(.pointer(x: 20, y: 20), bounds: bounds)
+            executor.stop("Emergency")
+            XCTAssertEqual(events.mouseValues.map { $0.0 }, [.otherMouseDown, .otherMouseDragged, .otherMouseUp])
+            XCTAssertEqual(events.mouseValues.map { $0.1 }, [Int64(button), Int64(button), Int64(button)])
+            XCTAssertTrue(executor.state.buttons.isEmpty)
+        }
+    }
+
     func testMediaKeysUseNativeTransitionsAndEmergencyReleases() throws {
         let bounds = CaptureRect(CGRect(x: 0, y: 0, width: 100, height: 100))
         for code: UInt16 in [72, 73, 74] {

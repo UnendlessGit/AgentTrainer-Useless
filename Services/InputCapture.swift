@@ -71,7 +71,7 @@ final class InputCapture: @unchecked Sendable {
             initial.keys = Set((0...127).compactMap { CGEventSource.keyState(.combinedSessionState, key: CGKeyCode($0)) ? UInt16($0) : nil })
         }
         if settings.mouseButtons {
-            initial.buttons = Set((0...4).filter { CGEventSource.buttonState(.combinedSessionState, button: CGMouseButton(rawValue: UInt32($0))!) })
+            initial.buttons = Set(ActionCapabilities.supportedButtons.filter { CGEventSource.buttonState(.combinedSessionState, button: CGMouseButton(rawValue: UInt32($0))!) })
         }
         let cursor = CGEvent(source: nil)?.location ?? .zero
         initial.cursorX = cursor.x; initial.cursorY = cursor.y

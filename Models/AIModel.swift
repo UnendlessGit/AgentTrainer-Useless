@@ -35,7 +35,7 @@ struct PolicyConfiguration: Codable, Equatable, Sendable {
               (32...512).contains(visualWidth), visualWidth % 4 == 0, (1...8).contains(visualDepth),
               (32...1024).contains(memorySize), memorySize % 4 == 0, (1...4).contains(memoryDepth),
               (2...128).contains(sequenceLength), capabilities.keys.allSatisfy({ $0 < 128 }),
-              capabilities.buttons.allSatisfy({ (0..<5).contains($0) }), (1...16).contains(capabilities.maximumHeldKeys) else {
+              capabilities.buttons.allSatisfy({ ActionCapabilities.supportedButtons.contains($0) }), (1...16).contains(capabilities.maximumHeldKeys) else {
             throw DataIntegrityError.invalidData("The model architecture or action capabilities are outside supported limits.")
         }
     }

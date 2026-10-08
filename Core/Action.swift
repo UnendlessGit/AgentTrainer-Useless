@@ -53,6 +53,7 @@ struct InputState: Codable, Equatable, Sendable {
 }
 
 struct ActionCapabilities: Codable, Equatable, Sendable {
+    static let supportedButtons = 0...4
     var keys: Set<UInt16> = Set(KeyNames.names.keys)
     var pointer = true
     var relativePointer = false
@@ -129,6 +130,13 @@ enum KeyNames {
     ]
     static func name(_ code: UInt16) -> String { names[code] ?? "Key \(code)" }
     static func button(_ button: Int) -> String {
-        switch button { case 0: "Left button"; case 1: "Right button"; case 2: "Middle button"; default: "Button \(button)" }
+        switch button {
+        case 0: "Left button"
+        case 1: "Right button"
+        case 2: "Middle button"
+        case 3: "Button 4"
+        case 4: "Button 5"
+        default: "Button \(button)"
+        }
     }
 }
