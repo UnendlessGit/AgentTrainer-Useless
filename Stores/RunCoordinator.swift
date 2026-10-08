@@ -76,7 +76,10 @@ final class RunCoordinator {
             let clock = SessionClock()
             let source = CaptureFrameSource(clock: clock, maximumDimension: settings.maximumDimension, onFailure: { [weak self] reason in
                 executor.stop(reason)
-                Task { @MainActor in self?.stop(reason) }
+                Task { @MainActor in
+                    guard let self, self.generation == id else { return }
+                    self.stop(reason)
+                }
             })
             capture = source
             let monitor = InputCapture(clock: clock, settings: settings, onInput: { state in
