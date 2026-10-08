@@ -5,15 +5,34 @@ The acceptance contract is [OBJECTIVE.md](OBJECTIVE.md). The project is not comp
 ## Milestones
 
 - [x] Native signed application, repository, build/run entry point, reference-informed navigation.
-- [ ] Versioned recording journal, raw transitions, static-scene observations, recovery, causal alignment tests.
-- [ ] ScreenCaptureKit targets, recording UI, global input capture, permissions, start/stop shortcuts.
-- [ ] Folder organization, preview/action inspection, nondestructive trimming and metadata.
-- [ ] Model architecture configuration, capability grammar, separate data assignments, compatibility fingerprints.
-- [ ] MLX vision/temporal policy, shared observation/action semantics, self-supervised pre-training.
-- [ ] Local imitation training, validation, live metrics, pause/resume/cancel, atomic complete checkpoints.
-- [ ] Local closed-loop inference, target bounds, action grammar, human override and emergency release.
-- [ ] Architecture comparison with equivalent data and budgets; measured performance review.
+- [x] Versioned recording journal, raw transitions, static-scene observations, recovery, causal alignment tests.
+- [x] ScreenCaptureKit targets, recording UI, global input capture, permissions, start/stop shortcuts.
+- [x] Folder organization, preview/action inspection, nondestructive trimming and metadata.
+- [x] Model architecture configuration, capability grammar, separate data assignments, compatibility fingerprints.
+- [x] MLX vision/temporal policy, shared observation/action semantics, self-supervised pre-training.
+- [x] Local imitation training, validation, live metrics, pause/resume/cancel, atomic complete checkpoints.
+- [x] Local closed-loop inference, target bounds, action grammar, human override and emergency release.
+- [x] Architecture comparison with equivalent data and budgets; measured performance review.
 - [ ] End-to-end real-app tests, every major visible control, full source audit, final signed build.
+
+## Current acceptance status (2026-10-08)
+
+The entries below consolidate completed implementation and evidence. The dated ledger preserves failed trials and superseded gaps; an older statement that a feature is pending is not its current status. Final sign-off remains open.
+
+| Goal area | Implemented and exercised | Scope of remaining acceptance work |
+| --- | --- | --- |
+| Record | Desktop/display/window/region capture, static-frame reuse, Retina coordinates, raw transition journal, stop-gesture trimming, failed-prefix recovery, bounded capture under animation stress. | The recorded native injected-event checks do not establish physical keyboard/device behavior. Reconcile the final visible-control checklist, including options not used in the real-app demonstrations. |
+| Library | Separate imitation/pretraining folders; create/rename/nest/delete, move recordings, browse/search, image/action inspection, nondestructive trims and metadata, eligibility/review, reversible deletion. | Final control inventory and release smoke confirmation; no missing core implementation identified. |
+| AI Models | Create/duplicate/rename/delete, vision/crop/memory/sequence settings, native labelled key grid, structured action capabilities, separate data assignment, compatibility fingerprints, session drafts and Discard. | Consolidate architecture-control coverage against the final UI; no task-specific architecture is used. |
+| Pre-training | Action-conditioned future spatial RGB objective, observation-only data, isolated folders, causal future masks, linear/spatial predictors, compatible transfer into imitation. | Prediction improvement is measured; downstream task-level benefit is not established. Optional pretraining must not be described as guaranteeing better agents. |
+| Train | Real MLX optimization, recording-level validation, action metrics, live resource/speed metrics, Pause/Resume/Cancel, atomic checksummed checkpoints, interrupted-validation recovery, fine-tuning from trained weights. | Latest 84 checks and normal fine-tuning UI pass. Final review should focus on new defects, not another broad training comparison. |
+| Run | Shared preprocessing/grammar/memory, all capture target modes, instruction limits, capability restrictions, sampling, duration/hold limits, human sharing/stop, focus/occlusion/geometry guards and emergency release. | Learned clearing, pointer control and short visual-cue memory are demonstrated. General task/game competence, long-delay memory and recovery from arbitrary human intervention are not established by these small models. |
+| Settings/storage | Permissions, custom shortcuts, appearance/resources, shared human-stop policy, cache/checkpoint cleanup, all three storage migrations with byte hashes and relaunch, malformed-data write protection. | Final control inventory; physical permission prompts and inaccessible hardware cannot be inferred from injected tests. |
+| Performance | Bounded native capture/input queues, streaming dataset indexes, carried temporal state, MLX/Metal on arm64, actual CPU/footprint/cache reporting, real capture and training profiles. | No reliable per-app GPU utilization percentage is available; UI says so. Large-corpus and multi-device scalability are not established by current measurements. |
+| Source and product audit | Reviews have covered storage/journals/alignment, both memory architectures, dataset/batch/loss/optimizer/checkpoints, capture/input/focus guards, app lifecycle and primary views. Found defects were fixed and logged. | Finish the consolidated control/source sign-off and repeat only the affected final end-to-end paths. |
+| Delivery | Private GitHub `main`, repeatable Apple Development signed Debug/Release builds, native icon, optimized arm64 release candidate. | Refresh the packaged candidate after current changes; final build designation waits for the outstanding acceptance sign-off. |
+
+Known policy failures remain evidence, not hidden product claims: the Calculator models click Clear unnecessarily on zero, the text-clearing model does not reliably recover after human insertion into a blank document, and the lower-loss recall checkpoint failed where the latest attention checkpoint succeeded. The app exposes latest/best choice and recorded-history evaluation limits. Those observations guide data/model selection; the app does not promise pretrained general-purpose behavior out of the box.
 
 ## Engineering constraints
 
