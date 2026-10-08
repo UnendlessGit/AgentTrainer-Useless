@@ -2,6 +2,14 @@ import XCTest
 @testable import AgentTrainer
 
 final class ControlGestureTests: XCTestCase {
+    func testStartShortcutReleaseIncludesEitherModifierSideButNotUnrelatedKeys() {
+        let original = ShortcutBindings().recording
+        XCTAssertTrue(Set<UInt16>([15, 54, 55, 58, 59, 61, 62]).isSubset(of: original.triggerKeyCodes))
+        XCTAssertTrue(original.triggerKeyCodes.isDisjoint(with: [0, 56, 57, 60, 63]))
+        let custom = ShortcutBinding(keyCode: 17, command: false, shift: true, option: false, control: false)
+        XCTAssertEqual(custom.triggerKeyCodes, [17, 56, 60])
+    }
+
     func testOnlyContiguousShortcutPrefixIsExcluded() {
         let flags: UInt64 = (1 << 17) | (1 << 20)
         var tracker = ControlGestureTracker(bindings: [ShortcutBinding(keyCode: 15)])

@@ -7,6 +7,8 @@ final class RecordingCoordinator {
     private(set) var phase: Phase = .idle
     private(set) var preview: NSImage?
     private(set) var manifest: RecordingManifest?
+    private(set) var waitingForShortcut = false
+    private var generation = UUID()
     private var clock: SessionClock?
     private var journal: RecordingJournal?
     private var input: InputCapture?
@@ -19,18 +21,36 @@ final class RecordingCoordinator {
 
     init(store: WorkspaceStore) { self.store = store }
 
-    func start(name: String, instruction: String, folderID: UUID?, target: CaptureTarget, settings: RecordingSettings) async {
+    func start(name: String, instruction: String, folderID: UUID?, target: CaptureTarget, settings: RecordingSettings,
+               startingShortcut: ShortcutBinding? = nil) async {
         guard store.canAccessWorkspace, phase == .idle else { return }
         guard !store.migrating, store.activeOperations.isEmpty else { store.error = "Finish the active operation before recording."; return }
         guard let folder = store.folders.first(where: { $0.id == folderID }) else { store.error = "Choose a Library folder for this recording."; return }
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { store.error = "Give this recording a name."; return }
         permissions.refresh()
         guard permissions.screenRecording else { store.error = "Screen Recording permission is required. Enable it in Settings."; return }
-        phase = .starting; preview = nil; errorDuringSession = nil
+        let id = UUID(); generation = id
+        phase = .starting; preview = nil; manifest = nil; errorDuringSession = nil; waitingForShortcut = false
         store.activeOperations.insert("recording")
         do {
+            if let shortcut = startingShortcut {
+                // The control chord is not a demonstrated action. Begin the
+                // session only after its keys are released, before sampling
+                // initial state or creating a journal.
+                let deadline = Date().addingTimeInterval(5)
+                while shortcut.triggerKeyCodes.contains(where: { CGEventSource.keyState(.combinedSessionState, key: $0) }) {
+                    guard generation == id, phase == .starting else { return }
+                    waitingForShortcut = true
+                    guard Date() < deadline else {
+                        throw DataIntegrityError.invalidData("Release \(shortcut.label), then start recording again.")
+                    }
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+            }
+            guard generation == id, phase == .starting else { return }
+            waitingForShortcut = false
             await catalog.refresh()
-            guard phase == .starting else { return }
+            guard generation == id, phase == .starting else { return }
             let (resolved, parts) = try catalog.resolve(target, settings: settings)
             guard let bounds = resolved.globalBounds?.cgRect else { throw DataIntegrityError.invalidData("No capture bounds are available.") }
             let clock = SessionClock()
@@ -42,7 +62,10 @@ final class RecordingCoordinator {
             let journal = try RecordingJournal(root: store.recordingRoot, manifest: manifest)
             self.journal = journal
             let failure: @Sendable (String) -> Void = { [weak self] message in
-                Task { @MainActor in await self?.stop(failure: message) }
+                Task { @MainActor in
+                    guard let self, self.generation == id else { return }
+                    await self.stop(failure: message)
+                }
             }
             if capturesInput {
                 let input = InputCapture(clock: clock, settings: settings, shortcuts: store.preferences.shortcuts ?? ShortcutBindings(),
@@ -56,25 +79,27 @@ final class RecordingCoordinator {
             let visual = VisualRecorder(clock: clock, journal: journal, input: input, bounds: bounds, settings: settings,
                 onPreview: { [weak self] data, snapshot in
                     Task { @MainActor in
-                        guard let self, self.phase == .recording else { return }
+                        guard let self, self.generation == id, self.phase == .recording else { return }
                         self.preview = NSImage(data: data); self.manifest = snapshot
                         self.store.upsertRecording(snapshot, url: journal.url)
                     }
                 }, onFailure: failure)
             self.visual = visual
             try await visual.start(parts: parts)
-            guard errorDuringSession == nil, phase == .starting else { return }
+            guard generation == id, errorDuringSession == nil, phase == .starting else { return }
             self.manifest = journal.snapshot
             store.upsertRecording(journal.snapshot, url: journal.url)
             phase = .recording
         } catch {
+            guard generation == id else { return }
             await stop(failure: error.localizedDescription)
         }
     }
 
     func stop(failure: String? = nil, trimControlGesture: Bool = false) async {
         guard phase != .idle && phase != .stopping else { return }
-        phase = .stopping; errorDuringSession = failure
+        generation = UUID()
+        phase = .stopping; errorDuringSession = failure; waitingForShortcut = false
         await input?.stop()
         await visual?.stop()
         if let journal, let clock {

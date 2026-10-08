@@ -87,6 +87,7 @@ final class AppSession {
         target.title = target.windowID != nil ? recorder.catalog.windows.first(where: { $0.id == target.windowID })?.title ?? "Window"
             : target.kind == .desktop ? "Full desktop" : recorder.catalog.displays.first(where: { $0.id == target.displayID })?.title ?? "Display"
         saveRecordingForm()
-        await recorder.start(name: form.name, instruction: form.instruction, folderID: form.folderID, target: target, settings: form.settings)
+        await recorder.start(name: form.name, instruction: form.instruction, folderID: form.folderID, target: target, settings: form.settings,
+            startingShortcut: fromShortcut ? (store.preferences.shortcuts ?? ShortcutBindings()).recording : nil)
     }
 }

@@ -9,7 +9,9 @@ struct RecordView: View {
             VStack(alignment: .leading, spacing: 22) {
                 PageHeader(title: "Record a demonstration", subtitle: "Show your model how you work. Every action, in time.") {
                     if recorder.isBusy {
-                        Button { Task { await recorder.stop() } } label: { Label("Stop recording", systemImage: "stop.fill") }
+                        Button { Task { await recorder.stop() } } label: {
+                            Label(recorder.phase == .starting ? "Cancel recording" : "Stop recording", systemImage: "stop.fill")
+                        }
                             .buttonStyle(.borderedProminent).tint(.red).disabled(recorder.phase == .stopping)
                     } else {
                         Button(action: start) { Label("Start recording", systemImage: "record.circle") }
@@ -28,6 +30,10 @@ struct RecordView: View {
                                 Metric(title: "OBSERVATIONS", value: (recorder.manifest?.observationCount ?? 0).formatted())
                                 Metric(title: "INPUT EVENTS", value: (recorder.manifest?.inputEventCount ?? 0).formatted())
                                 StatusPill(title: recorder.phase.rawValue, color: recorder.isBusy ? .red : .secondary)
+                            }
+                            if recorder.waitingForShortcut {
+                                Text("Release \((session.store.preferences.shortcuts ?? ShortcutBindings()).recording.label) to begin recording.")
+                                    .font(.callout).foregroundStyle(.secondary)
                             }
                             if let manifest = recorder.manifest, manifest.duration > 0 {
                                 Text("Session average: \(Double(manifest.observationCount) / manifest.duration, format: .number.precision(.fractionLength(1))) observations/s · \(manifest.droppedVisualFrames) frames replaced before sampling")

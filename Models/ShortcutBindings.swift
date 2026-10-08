@@ -17,6 +17,15 @@ struct ShortcutBinding: Codable, Equatable, Sendable {
     var shift = true
     var option = false
     var control = false
+    /// Either physical side can complete a modifier in the configured chord.
+    var triggerKeyCodes: Set<UInt16> {
+        var keys: Set<UInt16> = [UInt16(clamping: keyCode)]
+        if command { keys.formUnion([54, 55]) }
+        if shift { keys.formUnion([56, 60]) }
+        if option { keys.formUnion([58, 61]) }
+        if control { keys.formUnion([59, 62]) }
+        return keys
+    }
     var carbonModifiers: UInt32 {
         (command ? UInt32(cmdKey) : 0) | (shift ? UInt32(shiftKey) : 0) | (option ? UInt32(optionKey) : 0) | (control ? UInt32(controlKey) : 0)
     }
