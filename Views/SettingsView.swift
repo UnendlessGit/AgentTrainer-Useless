@@ -37,7 +37,11 @@ struct SettingsView: View {
                     Picker("Appearance", selection: preference(\.appearance)) { ForEach(AppPreferences.appearances, id: \.self) { Text($0).tag($0) } }.frame(maxWidth: 380)
                     Picker("MLX memory limit", selection: preference(\.memoryLimitGB)) { ForEach(AppPreferences.memoryLimitsGB, id: \.self) { Text("\($0) GB").tag($0) } }.frame(maxWidth: 380)
                     Picker("MLX cache limit", selection: preference(\.cacheLimitGB)) { ForEach(AppPreferences.cacheLimitsGB, id: \.self) { Text("\($0) GB").tag($0) } }.frame(maxWidth: 380)
-                    Toggle("Stop runs on human input by default", isOn: preference(\.stopOnHumanInput))
+                    Toggle("Stop runs on human input", isOn: Binding(
+                        get: { session.runner.configuration.stopOnHumanInput },
+                        set: { enabled in store.perform { try session.runner.setHumanInputPolicy(enabled) } }
+                    )).disabled(session.runner.isBusy)
+                    Text("Uses the same setting as Run and applies to the next run.").font(.caption).foregroundStyle(.secondary)
                 }
                 Surface(title: "Cache & checkpoint storage", symbol: "internaldrive") {
                     Text("Temporary training indexes can be rebuilt. Checkpoint cleanup preserves all latest/best pointers, model references, and three recent checkpoints per stage.")

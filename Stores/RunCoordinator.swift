@@ -31,6 +31,17 @@ final class RunCoordinator {
         store.perform { try store.requireWritable(); try AtomicFile.encode(configuration, to: store.supportURL.appendingPathComponent("run-configuration.json")) }
     }
 
+    /// Settings and Run share one policy. A saved Run setup must not silently
+    /// override a change made in Settings, including after restarting the app.
+    func setHumanInputPolicy(_ enabled: Bool) throws {
+        guard !isBusy else { throw DataIntegrityError.invalidData("Stop the current run before changing its human-input policy.") }
+        try store.requireWritable()
+        var updated = configuration
+        updated.stopOnHumanInput = enabled
+        try AtomicFile.encode(updated, to: store.supportURL.appendingPathComponent("run-configuration.json"))
+        configuration = updated
+    }
+
     func start() async {
         guard store.canAccessWorkspace, !isBusy, !store.migrating, store.activeOperations.isEmpty else { return }
         guard let model = store.models.first(where: { $0.id == configuration.modelID }), model.canRun else {

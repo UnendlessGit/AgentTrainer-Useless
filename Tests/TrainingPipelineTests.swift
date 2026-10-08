@@ -91,6 +91,27 @@ final class TrainingPipelineTests: XCTestCase {
         XCTAssertEqual(sum(abs(imitation.arrays[BatchField.futurePixels.rawValue])).item(Float.self), 0)
     }
 
+    func testPretrainingFingerprintIncludesTargetAtExactTrimEnd() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var item = try recording(root: root, kind: .pretraining)
+        item.edits.trimEnd = 0.6
+        func prepare(_ name: String) throws -> PreparedDataset {
+            try PreparedDataset.prepare(items: [item], configuration: configuration(), settings: TrainingSettings(), stage: .pretraining,
+                root: root.appendingPathComponent(name), checkCancellation: {}, progress: { _ in })
+        }
+        let before = try prepare("before")
+        let examples = try before.training[0].examples(start: 0, count: before.exampleCount)
+        XCTAssertEqual(examples.last?.nextObservation?.imageFile, "frames/5.jpg")
+        XCTAssertFalse(examples.contains { $0.observation.imageFile == "frames/5.jpg" })
+        let target = item.url.appendingPathComponent("frames/5.jpg")
+        try Data(contentsOf: item.url.appendingPathComponent("frames/4.jpg")).write(to: target)
+        let after = try prepare("after")
+        XCTAssertEqual(before.exampleCount, after.exampleCount)
+        XCTAssertNotEqual(before.fingerprint, after.fingerprint,
+                          "Resume must detect a changed future target, even if no decision uses it as input.")
+    }
+
     func testWorkerPauseResumeMatchesUninterruptedTrainingAndSavesValidation() throws {
         try checkWorkerPauseResume(architecture: .recurrent)
     }

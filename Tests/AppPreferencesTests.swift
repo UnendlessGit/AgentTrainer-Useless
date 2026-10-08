@@ -73,6 +73,38 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(store.preferences.memoryLimitGB, 12)
     }
 
+    @MainActor func testHumanInputSettingUpdatesTheSavedRunPolicyAndPreservesOtherControls() throws {
+        let root = try fixture(), store = WorkspaceStore(supportURL: root)
+        var preferences = store.preferences
+        preferences.stopOnHumanInput = false
+        try store.savePreferences(preferences)
+        let runner = RunCoordinator(store: store)
+        XCTAssertFalse(runner.configuration.stopOnHumanInput, "Legacy default applies before a Run setup exists.")
+        runner.configuration.modelID = UUID()
+        runner.configuration.maximumHoldSeconds = 4
+        runner.configuration.instruction = "Keep this instruction"
+        runner.saveConfiguration()
+        let original = runner.configuration
+
+        try runner.setHumanInputPolicy(true)
+        var expected = original; expected.stopOnHumanInput = true
+        XCTAssertEqual(runner.configuration, expected)
+        XCTAssertEqual(RunCoordinator(store: store).configuration, expected,
+                       "Restart must not restore an older Run override or the legacy default.")
+
+        // Run's own checkbox is the same value read by Settings.
+        runner.configuration.stopOnHumanInput = false
+        runner.saveConfiguration()
+        XCTAssertEqual(RunCoordinator(store: store).configuration, original)
+
+        let file = root.appendingPathComponent("run-configuration.json")
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+        try Data([1]).write(to: file.appendingPathComponent("block-replacement"))
+        XCTAssertThrowsError(try runner.setHumanInputPolicy(true))
+        XCTAssertEqual(runner.configuration, original, "Failed saves must not appear applied in Settings.")
+    }
+
     @MainActor func testVerifiedMigrationCanCommitWhileOtherWritesAreDisabled() async throws {
         let root = try fixture(), store = WorkspaceStore(supportURL: root.appendingPathComponent("Support"))
         await store.load()

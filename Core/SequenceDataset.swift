@@ -114,6 +114,7 @@ struct PreparedDataset: Sendable {
             let examples = try FileHandle(forWritingTo: examplesURL), offsets = try FileHandle(forWritingTo: offsetsURL)
             defer { try? examples.close(); try? offsets.close() }
             var count = 0, nonWaitCount = 0, position: UInt64 = 0, previousImage = ""
+            var finalFutureImage: String?
             try TrainingExampleBuilder.stream(item: item) { example in
                 try checkCancellation()
                 let bounds = example.observation.globalBounds
@@ -137,6 +138,8 @@ struct PreparedDataset: Sendable {
                     guard let next = example.nextObservation else { return }
                     let actionTime = example.decisionTime + UInt64(max(0, example.targetDelay) * 1e9)
                     guard next.reusedPixels || next.sourceTimeNanoseconds >= actionTime else { return }
+                    guard RecordingJournal.isSafeFramePath(next.imageFile) else { throw DataIntegrityError.invalidTimeline }
+                    finalFutureImage = next.imageFile
                 }
                 let row = try encoder.encode(example)
                 var offset = position.littleEndian, length = UInt64(row.count).littleEndian
@@ -145,6 +148,11 @@ struct PreparedDataset: Sendable {
                 try examples.write(contentsOf: row); try examples.write(contentsOf: Data([10]))
                 position += UInt64(row.count + 1); count += 1
                 if case .wait = example.targetAction {} else { nonWaitCount += 1 }
+            }
+            // A trim may end exactly at the final observation. Its pixels are
+            // still a pretraining target even when it has no decision of its own.
+            if let finalFutureImage, finalFutureImage != previousImage {
+                try hashFile(item.url.appendingPathComponent(finalFutureImage), into: &fingerprint, check: checkCancellation)
             }
             guard count > 0 else { throw DataIntegrityError.invalidData("“\(item.name)” has no usable targets after trimming and capture-boundary checks.") }
             try examples.synchronize(); try offsets.synchronize()
