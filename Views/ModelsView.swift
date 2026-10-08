@@ -118,6 +118,8 @@ private struct ModelEditor: View {
                 Toggle("Scrolling", isOn: $draft.configuration.capabilities.scrolling)
                 Toggle("Dragging", isOn: $draft.configuration.capabilities.dragging)
                 Toggle("Key combinations", isOn: $draft.configuration.capabilities.chords)
+                Stepper("Maximum held keys: \(draft.configuration.capabilities.maximumHeldKeys)",
+                        value: $draft.configuration.capabilities.maximumHeldKeys, in: 1...16)
                 Toggle("Repeated key events while held", isOn: $draft.configuration.capabilities.repeatsKeys)
                 ForEach(ActionCapabilities.supportedButtons, id: \.self) { code in
                     Toggle(KeyNames.button(code), isOn: Binding(get: { draft.configuration.capabilities.buttons.contains(code) }, set: {
@@ -126,6 +128,8 @@ private struct ModelEditor: View {
                 }
                 Button("\(showKeys ? "Hide" : "Choose") keyboard keys · \(draft.configuration.capabilities.keys.count) allowed") { showKeys.toggle() }
                     .accessibilityLabel("Choose allowed keyboard keys").accessibilityIdentifier("models.chooseKeys")
+                Text("Enable the controls used by your demonstrations. Held keys stay down between transitions; a release ends the hold. More allowed keys increase the choices the policy must learn.")
+                    .font(.caption).foregroundStyle(.secondary)
                 if showKeys {
                     HStack {
                         Button("All listed keys") { draft.configuration.capabilities.keys = Set(KeyNames.names.keys) }

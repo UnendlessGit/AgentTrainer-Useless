@@ -163,3 +163,31 @@ final class TrainingExampleTests: XCTestCase {
         XCTAssertNil(codec.token(for: .keyDown(code: 127)))
     }
 }
+
+extension TrainingExampleTests {
+    func testLongHoldRemainsHeldThroughWaitsUntilRecordedRelease() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let journal = try RecordingJournal(root: root, manifest: RecordingManifest(name: "Hold W", folderID: UUID(), kind: .imitation,
+            target: CaptureTarget(), settings: RecordingSettings()))
+        for tick in 1...15 {
+            let time = UInt64(tick) * 100_000_000
+            try journal.append(observation: VisualObservation(id: 0, timeNanoseconds: time, sourceTimeNanoseconds: time,
+                imageFile: "frames/0.jpg", width: 1, height: 1, globalBounds: CaptureRect(CGRect(x: 0, y: 0, width: 100, height: 100)),
+                state: InputState(), reusedPixels: false))
+        }
+        try journal.append(event: InputTransition(id: 0, timeNanoseconds: 110_000_000, action: .keyDown(code: 13)))
+        try journal.append(event: InputTransition(id: 0, timeNanoseconds: 1_310_000_000, action: .keyUp(code: 13)))
+        try journal.finish(at: 1_550_000_000)
+        let item = RecordingItem(manifest: journal.snapshot, edits: RecordingEdits(), url: journal.url)
+        var rows: [TrainingExample] = []
+        try TrainingExampleBuilder.stream(item: item) { rows.append($0) }
+        XCTAssertEqual(rows.first?.targetAction, .keyDown(code: 13))
+        for row in rows where row.decisionTime >= 200_000_000 && row.decisionTime <= 1_300_000_000 {
+            XCTAssertEqual(row.state.keys, [13], "Snapshot timing must not erase a recorded hold.")
+        }
+        XCTAssertTrue(rows.contains { $0.targetAction == .keyUp(code: 13) && $0.state.keys == [13] })
+        XCTAssertEqual(rows.last?.state.keys, [])
+        XCTAssertEqual(rows.filter { if case .keyDown = $0.targetAction { return true }; return false }.count, 1)
+    }
+}

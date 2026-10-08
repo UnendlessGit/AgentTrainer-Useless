@@ -29,7 +29,7 @@ enum RunWorker {
             guard let identifier = request.model.trainedCheckpoint.flatMap(UUID.init(uuidString:)) else {
                 throw DataIntegrityError.invalidData("Choose a model with a compatible imitation-learning checkpoint.")
             }
-            let (_, directory) = try checkpoints.inference(modelID: request.model.id, latestID: identifier,
+            let (checkpoint, directory) = try checkpoints.inference(modelID: request.model.id, latestID: identifier,
                 configuration: configuration, preferBest: request.configuration.useBestCheckpoint)
             Memory.memoryLimit = request.preferences.memoryLimitGB * 1_073_741_824
             Memory.cacheLimit = request.preferences.cacheLimitGB * 1_073_741_824
@@ -38,7 +38,8 @@ enum RunWorker {
             model.train(false); eval(model)
             MLXRandom.seed(42)
             let permissions = configuration.capabilities.intersecting(request.configuration.permissions)
-            let runner = try PolicyRunner(model: model, permissions: permissions, instruction: request.configuration.instruction)
+            let runner = try PolicyRunner(model: model, permissions: permissions, instruction: request.configuration.instruction,
+                                          hierarchical: checkpoint.settings.balancesActionFrequency)
             let start = clock.now, deadline = start + UInt64(request.configuration.maximumRunSeconds) * 1_000_000_000
             started = start
             var previous: ComputerAction = .wait(seconds: 0), previousTime = start, lastPublish = start
@@ -81,8 +82,8 @@ enum RunWorker {
                     previous = decision.action; previousTime = clock.now
                     progress.record(decision.action); progress.elapsed = Double(clock.now - start) / 1e9
                     progress.inferenceMilliseconds = decision.inferenceSeconds * 1000
-                    progress.lastAction = decision.action.label
-                    progress.history.append(String(format: "%.2fs  %@", progress.elapsed, decision.action.label))
+                    progress.lastAction = decision.action.label(holding: executor.state)
+                    progress.history.append(String(format: "%.2fs  %@", progress.elapsed, progress.lastAction))
                     if progress.history.count > 80 { progress.history.removeFirst(progress.history.count - 80) }
                     if clock.now >= lastPublish + 250_000_000 {
                         progress.activeMemory = Memory.activeMemory; progress.cacheMemory = Memory.cacheMemory

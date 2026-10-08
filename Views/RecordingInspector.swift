@@ -46,6 +46,11 @@ struct RecordingInspector: View {
                         Text(String(format: "%.3f s", Double(currentFrame?.observation.timeNanoseconds ?? 0) / 1e9)).monospacedDigit()
                     }.font(.caption).foregroundStyle(.secondary)
                     HStack { Text("Actions after this observation").font(.headline); Spacer(); Text("\(currentFrame?.eventCount ?? 0) events").foregroundStyle(.secondary) }
+                    if let state = currentFrame?.observation.state {
+                        let held = state.keys.sorted().map(KeyNames.name) + state.buttons.sorted().map(KeyNames.button)
+                        Text("Held at capture: " + (held.isEmpty ? "None" : held.joined(separator: ", ")))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     List(currentFrame?.events ?? []) { event in
                         HStack {
                             Text(String(format: "%.6f s", Double(event.timeNanoseconds) / 1e9)).monospaced().foregroundStyle(.secondary)

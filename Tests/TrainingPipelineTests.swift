@@ -236,11 +236,15 @@ final class TrainingPipelineTests: XCTestCase {
         }
     }
 
+    func testStateBalancedWorkerResumeMatchesUninterruptedWeights() throws {
+        try checkWorkerPauseResume(architecture: .recurrent, balanceActionFrequency: true)
+    }
+
     func testBalancedChoiceWorkerResumeMatchesUninterruptedWeights() throws {
         try checkWorkerPauseResume(architecture: .recurrent, balanceInputChoices: true)
     }
 
-    private func checkWorkerPauseResume(architecture: TemporalArchitecture, balanceInputChoices: Bool = false) throws {
+    private func checkWorkerPauseResume(architecture: TemporalArchitecture, balanceInputChoices: Bool = false, balanceActionFrequency: Bool = false) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let items = try [recording(root: root), recording(root: root)]
@@ -248,6 +252,7 @@ final class TrainingPipelineTests: XCTestCase {
         model.configuration.memory = architecture
         var settings = TrainingSettings(); settings.epochs = 1; settings.batchSize = 1; settings.checkpointInterval = 100
         settings.balancesInputChoices = balanceInputChoices
+        settings.balancesActionFrequency = balanceActionFrequency
         var preferences = AppPreferences.defaults(at: root)
         preferences.memoryLimitGB = 4; preferences.cacheLimitGB = 1
         let pause = TrainingControl(), first = ProgressCollector()
@@ -317,7 +322,7 @@ final class TrainingPipelineTests: XCTestCase {
         let parent = try XCTUnwrap(store.latest(modelID: model.id, stage: .imitation, configuration: model.configuration))
         let originalPayload = try Data(contentsOf: parent.1.appendingPathComponent("weights.safetensors"))
         model.trainedCheckpoint = parent.0.id.uuidString; model.trainedFingerprint = model.configuration.fingerprint
-        settings.startingWeights = .trained; settings.learningRate = 0.0001
+        settings.startingWeights = .trained; settings.learningRate = 0.0001; settings.balancesActionFrequency = false
         let items = try [original, recording(root: root)], control = TrainingControl(), progress = ProgressCollector()
         TrainingWorker.run(TrainingRequest(model: model, settings: settings, stage: .imitation, items: items,
             preferences: preferences, resume: false), control: control, publish: { update in
@@ -357,5 +362,25 @@ final class TrainingPipelineTests: XCTestCase {
         for (key, tensor) in optimizer.arrays() where key != "optimizer_step" {
             XCTAssertLessThanOrEqual(max(abs(tensor - (try XCTUnwrap(savedOptimizer[key])))).item(Float.self), 1e-6, key)
         }
+    }
+}
+
+extension TrainingPipelineTests {
+    func testBalanceWeightsUseTrainingSplitAndReachEveryBatch() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let items = try [recording(root: root), recording(root: root), recording(root: root)]
+        let c = configuration()
+        let dataset = try PreparedDataset.prepare(items: items, configuration: c, settings: TrainingSettings(), stage: .imitation,
+            root: root.appendingPathComponent("index"), checkCancellation: {}, progress: { _ in })
+        XCTAssertEqual(dataset.stateFrequencies.reduce(0) { $0 + $1.total }, dataset.exampleCount)
+        XCTAssertEqual(dataset.stateFrequencies.reduce(0) { $0 + $1.inputs }, dataset.nonWaitExampleCount)
+        let balance = PolicyLoss.ActionBalance(frequencies: dataset.stateFrequencies)
+        let plan = SequenceBatchPlan(recordings: dataset.training, chunk: 0)
+        let batch = try TrainingBatch.load(plan: plan, configuration: c, stage: .imitation, actionBalance: balance, checkCancellation: {})
+        let weights = batch.arrays[BatchField.actionWeights.rawValue].asArray(Float.self)
+        XCTAssertEqual(weights[0], balance.forState(InputState()).inputWeight)
+        XCTAssertEqual(weights[2], balance.forState(InputState(keys: [0])).inputWeight)
+        XCTAssertGreaterThan(weights[0], 0)
     }
 }

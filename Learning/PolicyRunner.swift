@@ -34,12 +34,14 @@ final class PolicyRunner {
     private let model: PolicyNetwork
     private let codec: PolicyActionCodec
     private let permissions: ActionCapabilities
+    private let hierarchical: Bool
     private(set) var memory = MemoryState()
     private var pendingMemory: MemoryState?
     private let instruction: MLXArray
 
-    init(model: PolicyNetwork, permissions: ActionCapabilities, instruction: String) throws {
+    init(model: PolicyNetwork, permissions: ActionCapabilities, instruction: String, hierarchical: Bool = false) throws {
         self.model = model; self.permissions = permissions
+        self.hierarchical = hierarchical
         codec = PolicyActionCodec(capabilities: model.configuration.capabilities)
         self.instruction = MLXArray(try ObservationPreprocessor.instruction(model.configuration.instructionConditioning ? instruction : ""),
                                     [1, 1, PolicyNetwork.instructionLength])
@@ -63,7 +65,7 @@ final class PolicyRunner {
         func choose(_ logits: MLXArray) -> MLXArray {
             deterministic ? argMax(logits, axis: -1) : MLXRandom.categorical(logits / max(0.05, temperature))
         }
-        let token = choose(logits)
+        let token = Self.selectAction(logits: logits, hierarchical: hierarchical, deterministic: deterministic, temperature: temperature)
         let grid = c.imageSize / c.patchSize
         // Patches must intersect the non-letterboxed source rectangle.
         let side = max(scene.bounds.width, scene.bounds.height)
@@ -79,11 +81,15 @@ final class PolicyRunner {
         let spatialX = (remainder(patch, grid).asType(.float32) + offset[0]) / Float(grid)
         let spatialY = (floor(patch.asType(.float32) / Float(grid)) + offset[1]) / Float(grid)
         // Gather all selected arguments in one GPU-to-CPU readback.
-        let selected = stacked([token.asType(.float32), spatialX, spatialY, continuous[0], continuous[1], delay.asType(.float32)])
+        // argMax/categorical return integer indices even when the network emits
+        // NaN or infinity. Check the distributions as well as selected arguments.
+        let finite = all(isFinite(logits)) & all(isFinite(output.delayLogits[0, last]))
+            & all(isFinite(output.spatialLogits[0, last]))
+        let selected = stacked([token.asType(.float32), spatialX, spatialY, continuous[0], continuous[1], delay.asType(.float32), finite.asType(.float32)])
         let hidden = output.hidden.map { stopGradient($0) }
         eval(selected, hidden)
         let values = selected.asArray(Float.self)
-        guard values.allSatisfy(\.isFinite) else { throw DataIntegrityError.invalidData("The model produced non-finite predictions.") }
+        guard values.allSatisfy(\.isFinite), values[6] == 1 else { throw DataIntegrityError.invalidData("The model produced non-finite predictions.") }
         let id = Int(values[0]), delayIndex = Int(values[5])
         guard codec.actions.indices.contains(id), PolicyNetwork.delayBins.indices.contains(delayIndex) else {
             throw DataIntegrityError.invalidData("The model produced an invalid action or timing token.")
@@ -106,4 +112,16 @@ final class PolicyRunner {
     }
 
     func discardDecision() { pendingMemory = nil }
+
+    /// Match the trained wait/input gate, then choose a valid input. Joint argmax
+    /// incorrectly compares Wait with each fraction of the total input mass.
+    static func selectAction(logits: MLXArray, hierarchical: Bool, deterministic: Bool = true, temperature: Float = 1) -> MLXArray {
+        func choose(_ values: MLXArray) -> MLXArray {
+            deterministic ? argMax(values, axis: -1) : MLXRandom.categorical(values / max(0.05, temperature))
+        }
+        guard hierarchical, logits.dim(-1) > 1 else { return choose(logits) }
+        let inputs = logits[.ellipsis, 1...]
+        let gate = stacked([logits[.ellipsis, 0], logSumExp(inputs, axis: -1)], axis: -1)
+        return which(choose(gate) .> 0, choose(inputs) + 1, MLXArray(Int32(0)))
+    }
 }

@@ -65,9 +65,14 @@ struct TrainView: View {
                         }.disabled(trainer.isBusy)
                         Text("Latest trained weights let you add demonstrations or change training settings with a fresh optimizer. Resume restores an interrupted run exactly. Pre-train always starts from new weights.")
                             .font(.caption).foregroundStyle(.secondary)
-                        Toggle("Balance input choices against waits", isOn: $trainer.settings.balancesInputChoices).disabled(trainer.isBusy)
-                        Text("Keeps the recorded wait/input frequency while giving rarer input choices more training weight. Applies to imitation learning.")
+                        Toggle("Balance actions and waits", isOn: $trainer.settings.balancesActionFrequency).disabled(trainer.isBusy)
+                        Text("Recommended for sparse inputs and held keys. Balances actions and waits separately while idle and while holding controls, then learns which input to use. Waiting never releases a held key.")
                             .font(.caption).foregroundStyle(.secondary)
+                        if !trainer.settings.balancesActionFrequency {
+                            Toggle("Strengthen input choices only (legacy)", isOn: $trainer.settings.balancesInputChoices).disabled(trainer.isBusy)
+                            Text("Preserves the recorded wait/input frequency. Many idle frames can still lead to a policy that only waits.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         Text("Validation uses separate recordings. With one recording, no validation score is reported. A run pauses at its time budget; Resume restores its data split, optimizer and memory.")
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
@@ -136,7 +141,7 @@ struct TrainView: View {
             HStack(spacing: 25) {
                 Metric(title: "STEP", value: p.step.formatted())
                 Metric(title: "EPOCH", value: "\(min(p.epoch + 1, p.epochs))/\(p.epochs)")
-                Metric(title: "TRAINING LOSS", value: number(p.loss))
+                Metric(title: "LAST BATCH LOSS", value: number(p.loss))
                 Metric(title: "VALIDATION LOSS", value: number(p.validationLoss))
                 Metric(title: "GRADIENT NORM", value: number(p.gradientNorm))
             }
@@ -149,10 +154,14 @@ struct TrainView: View {
                 }.chartForegroundStyleScale(["Training": Color.blue, "Validation": Color.orange]).frame(height: 160)
             }
             if let evaluation = p.actionEvaluation {
+                if let warning = evaluation.collapseWarning {
+                    Label(warning, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
+                }
                 HStack(spacing: 25) {
                     Metric(title: "HELD-OUT ACTION ACCURACY", value: percentage(evaluation.accuracy))
                     Metric(title: "NON-WAIT ACCURACY", value: percentage(evaluation.nonWaitAccuracy))
                     Metric(title: "NON-WAIT PRECISION", value: percentage(evaluation.nonWaitPrecision))
+                    Metric(title: "PRESS RECALL", value: percentage(evaluation.pressRecall))
                 }
                 Text("\(evaluation.total.formatted()) held-out decisions, including \(evaluation.nonWaitTotal.formatted()) non-wait actions. Evaluation uses recorded history; use Run to verify closed-loop behavior.")
                     .font(.caption).foregroundStyle(.secondary)

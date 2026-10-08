@@ -24,7 +24,10 @@ final class RunCoordinator {
     init(store: WorkspaceStore) {
         self.store = store; configuration.stopOnHumanInput = store.preferences.stopOnHumanInput
         let url = store.supportURL.appendingPathComponent("run-configuration.json")
-        if let saved = try? AtomicFile.decode(RunConfiguration.self, from: url) { configuration = saved }
+        if FileManager.default.fileExists(atPath: url.path) {
+            do { configuration = try AtomicFile.decode(RunConfiguration.self, from: url) }
+            catch { store.error = "Run settings could not be restored: \(error.localizedDescription)" }
+        }
     }
 
     func saveConfiguration() {

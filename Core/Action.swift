@@ -31,6 +31,12 @@ enum ComputerAction: Codable, Equatable, Sendable {
         case .wait(let seconds): return String(format: "Wait %.3f s", seconds)
         }
     }
+
+    func label(holding state: InputState) -> String {
+        guard case .wait(let seconds) = self else { return label }
+        let held = state.keys.sorted().map(KeyNames.name) + state.buttons.sorted().map(KeyNames.button)
+        return held.isEmpty ? label : String(format: "Hold %@ · %.3f s", held.joined(separator: ", "), seconds)
+    }
 }
 
 struct InputState: Codable, Equatable, Sendable {

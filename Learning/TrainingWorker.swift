@@ -110,6 +110,7 @@ enum TrainingWorker {
             var epoch = 0, cursor = 0, step = 0
             var hidden: [MLXArray] = [], lastLoss: Float = 0, validationLoss: Float?, bestLoss: Float?
             var initialWeights: InitialWeights? = .scratch
+            var trainingRunID: UUID? = UUID()
             if request.resume {
                 guard let (saved, directory) = try checkpoints.latest(modelID: request.model.id, stage: request.stage, configuration: request.model.configuration) else {
                     throw DataIntegrityError.invalidData("There is no resumable checkpoint for this model and stage.")
@@ -132,6 +133,7 @@ enum TrainingWorker {
                 progress.actionEvaluation = saved.actionEvaluation
                 progress.checkpoint = saved.id
                 initialWeights = saved.initialWeights
+                trainingRunID = saved.trainingRunID
                 guard epoch < request.settings.epochs else { throw DataIntegrityError.invalidData("This run already completed all epochs. Start a new run to train again.") }
             } else if request.stage == .imitation {
                 let source: (String?, TrainingStage)?
@@ -155,7 +157,12 @@ enum TrainingWorker {
             eval(model)
             model.train(true)
             let stage = request.stage
-            let lossGradient = valueAndGrad(model: model) { model, arrays in PolicyLoss.values(model, arrays, stage: stage, balanceInputChoices: request.settings.balancesInputChoices) }
+            let actionBalance = request.settings.balancesActionFrequency
+                ? (request.settings.actionBalanceVersion == 2 ? PolicyLoss.ActionBalance(frequencies: dataset.stateFrequencies)
+                    : PolicyLoss.ActionBalance(total: dataset.exampleCount, inputs: dataset.nonWaitExampleCount)) : nil
+            let lossGradient = valueAndGrad(model: model) { model, arrays in
+                PolicyLoss.values(model, arrays, stage: stage, balanceInputChoices: request.settings.balancesInputChoices, actionBalance: actionBalance)
+            }
             var schedule = SequenceSchedule(recordings: dataset.training, batchSize: request.settings.batchSize,
                 sequenceLength: model.configuration.sequenceLength, seed: request.settings.seed &+ UInt64(epoch))
             guard (0...schedule.count).contains(cursor), epoch >= 0, optimizer.step == step else {
@@ -194,6 +201,7 @@ enum TrainingWorker {
                     trainingLoss: lastLoss, validationLoss: cursor == 0 ? validationLoss : nil, bestValidationLoss: bestLoss)
                 var evaluatedManifest = manifest
                 evaluatedManifest.initialWeights = initialWeights
+                evaluatedManifest.trainingRunID = trainingRunID
                 // Mid-epoch weights have changed since the last validation pass.
                 // Its scores remain useful in the live UI, but do not describe
                 // these saved weights. Only epoch-boundary saves own the scores.
@@ -228,9 +236,10 @@ enum TrainingWorker {
                         guard let plan = validationSchedule.plan(at: index) else { break }
                         if plan.resetsMemory { validationHidden = [] }
                         try autoreleasepool {
-                            let batch = try TrainingBatch.load(plan: plan, configuration: model.configuration, stage: stage, checkCancellation: {})
+                            let batch = try TrainingBatch.load(plan: plan, configuration: model.configuration, stage: stage, actionBalance: actionBalance, checkCancellation: {})
                             let output = PolicyLoss.forward(model, batch.arrays + validationHidden)
-                            let loss = PolicyLoss.loss(output, batch.arrays, stage: stage, balanceInputChoices: request.settings.balancesInputChoices)
+                            let loss = PolicyLoss.loss(output, batch.arrays, stage: stage, balanceInputChoices: request.settings.balancesInputChoices,
+                                                       actionBalance: actionBalance)
                             validationHidden = output.hidden.map { stopGradient($0) }
                             eval(loss, validationHidden)
                             let value = loss.item(Float.self)
@@ -240,7 +249,8 @@ enum TrainingWorker {
                                 evaluation.add(ActionEvaluation.measure(logits: output.actionLogits,
                                     targets: batch.arrays[BatchField.actions.rawValue], valid: batch.arrays[BatchField.valid.rawValue],
                                     mask: batch.arrays[BatchField.actionMask.rawValue],
-                                    actions: PolicyActionCodec(capabilities: model.configuration.capabilities).actions))
+                                    actions: PolicyActionCodec(capabilities: model.configuration.capabilities).actions,
+                                    hierarchical: request.settings.balancesActionFrequency))
                             }
                         }
                     }
@@ -274,7 +284,7 @@ enum TrainingWorker {
                 if plan.resetsMemory { hidden = [] }
                 report(.training, stage == .pretraining ? "Learning action-conditioned visual dynamics" : "Learning demonstrated actions and timing")
                 try autoreleasepool {
-                    let batch = try TrainingBatch.load(plan: plan, configuration: model.configuration, stage: stage, checkCancellation: {})
+                    let batch = try TrainingBatch.load(plan: plan, configuration: model.configuration, stage: stage, actionBalance: actionBalance, checkCancellation: {})
                     let (values, gradients) = lossGradient(model, batch.arrays + hidden)
                     let loss = values[0].item(Float.self)
                     guard loss.isFinite else { throw DataIntegrityError.invalidData("Training loss became non-finite. Reduce the learning rate and start from a valid checkpoint.") }

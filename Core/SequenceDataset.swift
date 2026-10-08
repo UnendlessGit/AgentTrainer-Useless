@@ -1,12 +1,24 @@
 import Foundation
 import CryptoKit
 
+struct ActionFrequency: Sendable {
+    var total = 0
+    var inputs = 0
+
+    // Distinguish idle, keyboard holds, mouse holds and combined holds. Repeats
+    // and releases are much denser during holds than initial presses while idle.
+    static func group(for state: InputState) -> Int {
+        (state.keys.isEmpty ? 0 : 1) + (state.buttons.isEmpty ? 0 : 2)
+    }
+}
+
 struct IndexedRecording: Sendable {
     let item: RecordingItem
     let examplesURL: URL
     let offsetsURL: URL
     let count: Int
     var nonWaitCount: Int = 0
+    var stateFrequencies = Array(repeating: ActionFrequency(), count: 4)
 
     func examples(start: Int, count requested: Int) throws -> [TrainingExample] {
         guard start < count else { return [] }
@@ -84,6 +96,12 @@ struct PreparedDataset: Sendable {
     var excludedOutsideTarget: Int
     var exampleCount: Int { training.reduce(0) { $0 + $1.count } }
     var nonWaitExampleCount: Int { training.reduce(0) { $0 + $1.nonWaitCount } }
+    var stateFrequencies: [ActionFrequency] {
+        (0..<4).map { group in
+            ActionFrequency(total: training.reduce(0) { $0 + $1.stateFrequencies[group].total },
+                            inputs: training.reduce(0) { $0 + $1.stateFrequencies[group].inputs })
+        }
+    }
 
     /// Examples and offsets live on disk; memory use is independent of the number
     /// of frames. A new verified index is built before each run/resume.
@@ -119,6 +137,7 @@ struct PreparedDataset: Sendable {
             let examples = try FileHandle(forWritingTo: examplesURL), offsets = try FileHandle(forWritingTo: offsetsURL)
             defer { try? examples.close(); try? offsets.close() }
             var count = 0, nonWaitCount = 0, position: UInt64 = 0, previousImage = ""
+            var frequencies = Array(repeating: ActionFrequency(), count: 4)
             var finalFutureImage: String?
             try TrainingExampleBuilder.stream(item: item) { example in
                 try checkCancellation()
@@ -150,7 +169,9 @@ struct PreparedDataset: Sendable {
                 try withUnsafeBytes(of: &length) { try offsets.write(contentsOf: $0) }
                 try examples.write(contentsOf: row); try examples.write(contentsOf: Data([10]))
                 position += UInt64(row.count + 1); count += 1
-                if case .wait = example.targetAction {} else { nonWaitCount += 1 }
+                let group = ActionFrequency.group(for: example.state)
+                frequencies[group].total += 1
+                if case .wait = example.targetAction {} else { nonWaitCount += 1; frequencies[group].inputs += 1 }
             }
             // A trim may end exactly at the final observation. Its pixels are
             // still a pretraining target even when it has no decision of its own.
@@ -159,7 +180,8 @@ struct PreparedDataset: Sendable {
             }
             guard count > 0 else { throw DataIntegrityError.invalidData("“\(item.name)” has no usable targets after trimming and capture-boundary checks.") }
             try examples.synchronize(); try offsets.synchronize()
-            indexed.append(IndexedRecording(item: item, examplesURL: examplesURL, offsetsURL: offsetsURL, count: count, nonWaitCount: nonWaitCount))
+            indexed.append(IndexedRecording(item: item, examplesURL: examplesURL, offsetsURL: offsetsURL, count: count,
+                                            nonWaitCount: nonWaitCount, stateFrequencies: frequencies))
         }
         var generator = StableRandom(seed: settings.seed)
         indexed.shuffle(using: &generator)

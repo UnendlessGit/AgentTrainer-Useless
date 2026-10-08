@@ -10,7 +10,22 @@ if ! security find-identity -v -p codesigning | /usr/bin/grep "$SIGNING_IDENTITY
 fi
 case "$MODE" in run|--debug|--logs|--telemetry|--verify|--build|--release|--test) ;; *) echo 'Usage: build_and_run.sh [--build|--release|--test|--debug|--logs|--telemetry|--verify]' >&2; exit 2 ;; esac
 if [[ "$MODE" != --build && "$MODE" != --release && "$MODE" != --test ]]; then
-  pkill -x AgentTrainer >/dev/null 2>&1 || true
+  if pgrep -x AgentTrainer >/dev/null; then
+    # Go through the app's termination handler: flush recording journals, pause
+    # training at a checkpoint, and release input before replacing the process.
+    if ! osascript -e 'with timeout of 30 seconds' -e 'tell application id "com.agenttrainer.AgentTrainer" to quit' -e 'end timeout'; then
+      echo 'AgentTrainer could not quit safely. Stop its active operation and retry.' >&2
+      exit 1
+    fi
+    for attempt in {1..30}; do
+      pgrep -x AgentTrainer >/dev/null || break
+      sleep 1
+    done
+    if pgrep -x AgentTrainer >/dev/null; then
+      echo 'AgentTrainer is still saving work. Retry after it finishes quitting.' >&2
+      exit 1
+    fi
+  fi
 fi
 ACTION=build
 CONFIGURATION=Debug

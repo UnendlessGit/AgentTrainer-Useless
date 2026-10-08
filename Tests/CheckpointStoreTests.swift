@@ -104,3 +104,28 @@ final class CheckpointStoreTests: XCTestCase {
         XCTAssertThrowsError(try store.latest(modelID: metadata.modelID, stage: .pretraining, configuration: changed))
     }
 }
+
+extension CheckpointStoreTests {
+    func testBestCheckpointCannotCrossTrainingRunsOrActionObjectives() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = CheckpointStore(root: root), modelID = UUID(), c = PolicyConfiguration(), run = UUID()
+        func save(runID: UUID, balanced: Bool, best: Bool) throws -> UUID {
+            var metadata = CheckpointManifest(modelID: modelID, configuration: c, configurationFingerprint: c.fingerprint,
+                datasetFingerprint: "same data", trainingRecordingIDs: [], validationRecordingIDs: [], stage: .imitation,
+                settings: TrainingSettings(), step: 1, epoch: 1, sampleCursor: 0, trainingLoss: 1)
+            metadata.trainingRunID = runID; metadata.settings.balancesActionFrequency = balanced
+            return try store.save(metadata, isBest: best) { url in
+                try Data([1]).write(to: url.appendingPathComponent("weights.safetensors"))
+                try Data([2]).write(to: url.appendingPathComponent("optimizer.safetensors"))
+            }.id
+        }
+        let best = try save(runID: run, balanced: true, best: true)
+        let sameRun = try save(runID: run, balanced: true, best: false)
+        XCTAssertEqual(try store.inference(modelID: modelID, latestID: sameRun, configuration: c, preferBest: true).0.id, best)
+        let newRun = try save(runID: UUID(), balanced: true, best: false)
+        XCTAssertEqual(try store.inference(modelID: modelID, latestID: newRun, configuration: c, preferBest: true).0.id, newRun)
+        let differentLoss = try save(runID: run, balanced: false, best: false)
+        XCTAssertEqual(try store.inference(modelID: modelID, latestID: differentLoss, configuration: c, preferBest: true).0.id, differentLoss)
+    }
+}

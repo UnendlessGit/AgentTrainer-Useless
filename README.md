@@ -35,6 +35,8 @@ Models with task conditioning accept instructions up to 96 UTF-8 bytes. The visi
 
 **File → New recording** (Command N) opens the Record tab, including after you close the main window. The workspace uses one main window; Settings also has its native macOS window.
 
+New imitation runs balance actions and waits separately while idle and while holding controls. This prevents dense hold/repeat events from hiding rare initial presses. Run and validation share the corresponding action selector. Old checkpoints remain compatible, but a model that learned only Wait needs a new training run (or fine-tuning with **Latest trained checkpoint**); Resume preserves its original objective. Run warns when a checkpoint predicted no input or no presses. Wait during a hold now appears as **Hold W**, for example; it does not release that key.
+
 Held-out scores use recorded histories. Check actual task completion, including whether the model waits after finishing. The validation workspace has demonstrated text clearing, Calculator pointer control and short visual-cue recall; these do not establish general competence on unfamiliar tasks.
 
 Recordings, models and checkpoints live outside this repository, by default under `~/Library/Application Support/AgentTrainer`. Storage changes copy and verify data before switching paths, preserving the source. Do not commit recordings, credentials or model weights.

@@ -50,6 +50,7 @@ struct CheckpointStore: Sendable {
         guard manifest.epoch >= 0, manifest.sampleCursor >= 0, manifest.step >= 0 else {
             throw DataIntegrityError.invalidData("The checkpoint contains an invalid training position.")
         }
+        try manifest.settings.validate()
         for name in ["weights.safetensors", "optimizer.safetensors"] {
             guard let expected = manifest.files[name], try digest(url.appendingPathComponent(name)) == expected else {
                 throw DataIntegrityError.invalidData("The checkpoint failed its integrity check (\(name)). Previous checkpoints remain preserved.")
@@ -83,6 +84,13 @@ struct CheckpointStore: Sendable {
     }
 
     func inference(modelID: UUID, latestID: UUID, configuration: PolicyConfiguration, preferBest: Bool) throws -> (CheckpointManifest, URL) {
+        let selected = try inferenceMetadata(modelID: modelID, latestID: latestID, configuration: configuration, preferBest: preferBest)
+        return try load(modelID: modelID, checkpointID: selected.id, configuration: configuration)
+    }
+
+    /// Selection and UI diagnostics share the same small metadata reads. Payload
+    /// integrity is still checked on the worker before loading weights.
+    func inferenceMetadata(modelID: UUID, latestID: UUID, configuration: PolicyConfiguration, preferBest: Bool) throws -> CheckpointManifest {
         let modelRoot = root.appendingPathComponent(modelID.uuidString)
         var selected = latestID
         let bestURL = modelRoot.appendingPathComponent("best-imitation.json")
@@ -97,12 +105,17 @@ struct CheckpointStore: Sendable {
             // A prior run's best pointer may remain after configuration/data changes
             // or a new run without validation. It must not override current weights.
             if best.configurationFingerprint == configuration.fingerprint && best.datasetFingerprint == latest.datasetFingerprint
-                && best.settings.balancesInputChoices == latest.settings.balancesInputChoices {
+                && best.settings.balancesInputChoices == latest.settings.balancesInputChoices
+                && best.settings.balancesActionFrequency == latest.settings.balancesActionFrequency
+                && best.settings.actionBalanceVersion == latest.settings.actionBalanceVersion
+                && best.trainingRunID == latest.trainingRunID {
                 selected = best.id
             }
         }
-        let result = try load(modelID: modelID, checkpointID: selected, configuration: configuration)
-        guard result.0.stage == .imitation else { throw DataIntegrityError.invalidData("Only imitation-learning checkpoints can control input.") }
+        let result = try AtomicFile.decode(CheckpointManifest.self, from: modelRoot.appendingPathComponent(selected.uuidString).appendingPathComponent("manifest.json"))
+        guard result.schemaVersion == 1, result.id == selected, result.modelID == modelID,
+              result.configurationFingerprint == configuration.fingerprint,
+              result.stage == .imitation else { throw DataIntegrityError.invalidData("A compatible imitation-learning checkpoint is required to control input.") }
         return result
     }
 

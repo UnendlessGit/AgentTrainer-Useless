@@ -43,6 +43,14 @@ struct TrainingSettings: Codable, Equatable, Sendable {
         get { balancedInputChoices ?? false }
         set { balancedInputChoices = newValue }
     }
+    // Missing in older checkpoints preserves their exact objective and decoder.
+    // New runs balance the decision to act as well as the choice of input.
+    var balancedActionFrequency: Bool? = true
+    var actionBalanceVersion: Int? = 2
+    var balancesActionFrequency: Bool {
+        get { balancedActionFrequency ?? false }
+        set { balancedActionFrequency = newValue }
+    }
     /// Each run is bounded, per the acceptance objective. Resumable checkpoints
     /// let the user continue with additional explicitly started runs.
     var maximumRunMinutes = 20
@@ -53,6 +61,9 @@ struct TrainingSettings: Codable, Equatable, Sendable {
               gradientClip.isFinite && gradientClip > 0, checkpointInterval > 0,
               validationFraction.isFinite && (0...0.5).contains(validationFraction), (1...30).contains(maximumRunMinutes) else {
             throw DataIntegrityError.invalidData("Use valid training settings and a time budget from 1 to 30 minutes.")
+        }
+        guard (1...2).contains(actionBalanceVersion ?? 1) else {
+            throw DataIntegrityError.invalidData("This action-balancing version is not supported.")
         }
     }
 }
@@ -79,6 +90,7 @@ struct CheckpointManifest: Codable, Sendable {
     var actionEvaluation: ActionEvaluation?
     // Nil means provenance was not recorded by an earlier app version.
     var initialWeights: InitialWeights?
+    var trainingRunID: UUID?
     var createdAt = Date()
     var files: [String: String] = [:]
 }

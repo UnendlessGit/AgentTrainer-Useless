@@ -3,6 +3,8 @@ import SwiftUI
 struct RunView: View {
     var session: AppSession
     @State private var showKeys = false
+    @State private var checkpointSummary: String?
+    @State private var checkpointWarning: String?
     private var runner: RunCoordinator { session.runner }
     private var model: AIModel? { session.store.models.first { $0.id == runner.configuration.modelID } }
     private var instructionFits: Bool {
@@ -92,8 +94,12 @@ struct RunView: View {
                                 }
                             }
                             Toggle("Use checkpoint with lowest validation loss", isOn: $runner.configuration.useBestCheckpoint)
+                            if let checkpointSummary { Text(checkpointSummary).font(.caption).foregroundStyle(.secondary) }
+                            if let checkpointWarning {
+                                Label(checkpointWarning, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                            }
                             Text(runner.configuration.useBestCheckpoint
-                                 ? "Selected by loss on recorded history. Uses the latest checkpoint if no validation checkpoint matches this configuration and dataset."
+                                 ? "Selected by loss on recorded history. Uses the latest checkpoint if none matches this training run."
                                  : "Uses the latest training checkpoint. Compare live task completion with the checkpoint selected by validation loss.")
                                 .font(.caption).foregroundStyle(.secondary)
                             Toggle("Choose the most likely action", isOn: $runner.configuration.deterministic)
@@ -149,6 +155,21 @@ struct RunView: View {
             if let selected = runner.configuration.modelID, !ids.contains(selected) { runner.configuration.modelID = nil }
         }
         .onDisappear { runner.saveConfiguration() }
+        .task(id: "\(model?.id.uuidString ?? ""): \(model?.trainedCheckpoint ?? ""): \(runner.configuration.useBestCheckpoint)") {
+            checkpointSummary = nil; checkpointWarning = nil
+            guard let model, let id = model.trainedCheckpoint.flatMap(UUID.init(uuidString:)) else { return }
+            let checkpoints = CheckpointStore(root: URL(fileURLWithPath: session.store.preferences.checkpointsPath))
+            let preferBest = runner.configuration.useBestCheckpoint
+            do {
+                let metadata = try await Task.detached(priority: .utility) {
+                    try checkpoints.inferenceMetadata(modelID: model.id, latestID: id, configuration: model.configuration, preferBest: preferBest)
+                }.value
+                try Task.checkCancellation()
+                checkpointSummary = "Checkpoint \(metadata.id.uuidString.prefix(8)) · epoch \(metadata.epoch) · \(metadata.settings.balancesActionFrequency ? "balanced actions" : "legacy action frequency")"
+                checkpointWarning = metadata.actionEvaluation?.collapseWarning
+            } catch is CancellationError { }
+            catch { checkpointWarning = error.localizedDescription }
+        }
     }
 
     private var sourcePicker: some View {

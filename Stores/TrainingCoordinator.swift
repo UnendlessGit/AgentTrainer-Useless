@@ -16,7 +16,12 @@ final class TrainingCoordinator {
         self.store = store
         let url = store.supportURL.appendingPathComponent("training-settings.json")
         if FileManager.default.fileExists(atPath: url.path) {
-            do { settings = try AtomicFile.decode(TrainingSettings.self, from: url); try settings.validate() }
+            do {
+                settings = try AtomicFile.decode(TrainingSettings.self, from: url)
+                if settings.balancedActionFrequency == nil { settings.balancesActionFrequency = true }
+                if settings.actionBalanceVersion == nil { settings.actionBalanceVersion = 2 }
+                try settings.validate()
+            }
             catch { settings = TrainingSettings(); store.error = "Training settings could not be restored: \(error.localizedDescription)" }
         }
     }
@@ -37,7 +42,11 @@ final class TrainingCoordinator {
         guard !isBusy else { return }
         guard store.canAccessWorkspace else { return }
         guard !store.migrating, store.activeOperations.isEmpty else { store.error = "Finish the active operation before training."; return }
-        saveSettings()
+        do {
+            try store.requireWritable()
+            try settings.validate()
+            try AtomicFile.encode(settings, to: store.supportURL.appendingPathComponent("training-settings.json"))
+        } catch { store.error = error.localizedDescription; return }
         store.activeOperations.insert("training")
         let request = TrainingRequest(model: model, settings: settings, stage: stage, items: recordings(for: model, stage: stage),
                                       preferences: store.preferences, resume: resume)

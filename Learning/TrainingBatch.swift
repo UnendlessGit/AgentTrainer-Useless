@@ -5,7 +5,7 @@ import MLXNN
 
 enum BatchField: Int, CaseIterable {
     case images, crops, context, previousActions, instructions, actions, arguments, delay, spatial, offsets
-    case pointerMask, continuousMask, valid, actionMask, futurePixels, currentPixels, futureMask
+    case pointerMask, continuousMask, valid, actionMask, futurePixels, currentPixels, futureMask, actionWeights
 }
 
 struct TrainingBatch {
@@ -13,12 +13,13 @@ struct TrainingBatch {
     var validCount: Int
 
     static func load(plan: SequenceBatchPlan, configuration c: PolicyConfiguration, stage: TrainingStage,
-                     checkCancellation: () throws -> Void) throws -> TrainingBatch {
+                     actionBalance: PolicyLoss.ActionBalance? = nil, checkCancellation: () throws -> Void) throws -> TrainingBatch {
         let codec = PolicyActionCodec(capabilities: c.capabilities), length = c.sequenceLength
         var images: [MLXArray] = [], crops: [MLXArray] = [], future: [MLXArray] = []
         var contexts: [Float] = [], previous: [Int32] = [], instructions: [Int32] = [], actions: [Int32] = []
         var arguments: [Float] = [], delays: [Int32] = [], spatial: [Int32] = [], offsets: [Float] = []
         var pointer: [Float] = [], continuous: [Float] = [], valid: [Float] = [], masks: [Float] = [], futureMask: [Float] = []
+        var actionWeights: [Float] = []
         let zero = MLXArray.zeros([c.imageSize, c.imageSize, 3]), grid = c.imageSize / c.patchSize
         var count = 0
         for recording in plan.recordings {
@@ -42,6 +43,7 @@ struct TrainingBatch {
                     previous.append(0); instructions += Array(repeating: 0, count: PolicyNetwork.instructionLength)
                     actions.append(0); arguments += [0, 0]; delays.append(0); spatial.append(0); offsets += [0, 0]
                     pointer.append(0); continuous.append(0); valid.append(0); masks += Array(repeating: 0, count: codec.count); futureMask.append(0)
+                    actionWeights += [0, 0]
                     continue
                 }
                 let row = rows[time], observation = row.observation
@@ -55,6 +57,8 @@ struct TrainingBatch {
                 instructions += try ObservationPreprocessor.instruction(c.instructionConditioning ? row.instruction : "")
                 guard let token = codec.token(for: row.targetAction) else { throw DataIntegrityError.invalidData("An indexed action is incompatible with this model.") }
                 actions.append(Int32(token)); masks += codec.mask(state: row.state, capabilities: c.capabilities)
+                let balance = actionBalance?.forState(row.state)
+                actionWeights += [token == 0 ? (balance?.waitWeight ?? 1) : (balance?.inputWeight ?? 1), balance?.choiceWeight ?? 1]
                 let (x, y) = codec.arguments(for: row.targetAction, bounds: observation.globalBounds)
                 arguments += [x, y]
                 delays.append(Int32(PolicyNetwork.delayBins.indices.min(by: { abs(PolicyNetwork.delayBins[$0] - row.targetDelay) < abs(PolicyNetwork.delayBins[$1] - row.targetDelay) }) ?? 0))
@@ -80,12 +84,40 @@ struct TrainingBatch {
             MLXArray(arguments, [b, t, 2]), MLXArray(delays, [b, t]), MLXArray(spatial, [b, t]), MLXArray(offsets, [b, t, 2]),
             MLXArray(pointer, [b, t]), MLXArray(continuous, [b, t]), MLXArray(valid, [b, t]), MLXArray(masks, [b, t, codec.count]),
             stage == .pretraining ? patchPixels(stacked(future).reshaped(imageShape)) : MLXArray.zeros([b, t, grid * grid, 3]),
-            stage == .pretraining ? patchPixels(imageArray) : MLXArray.zeros([b, t, grid * grid, 3]), MLXArray(futureMask, [b, t])]
+            stage == .pretraining ? patchPixels(imageArray) : MLXArray.zeros([b, t, grid * grid, 3]), MLXArray(futureMask, [b, t]),
+            MLXArray(actionWeights, [b, t, 2])]
         return TrainingBatch(arrays: arrays, validCount: count)
     }
 }
 
 enum PolicyLoss {
+    struct ActionBalance {
+        let waitWeight: Float
+        let inputWeight: Float
+        let choiceWeight: Float
+        var states: [ActionBalance] = []
+
+        init(total: Int, inputs: Int) {
+            let waits = total - inputs
+            let groups: Float = waits > 0 && inputs > 0 ? 2 : 1
+            // An unseen class may occur in validation. It must still contribute
+            // loss instead of receiving a misleading zero score.
+            waitWeight = waits > 0 ? Float(total) / (groups * Float(waits)) : 1
+            inputWeight = inputs > 0 ? Float(total) / (groups * Float(inputs)) : 1
+            choiceWeight = inputs > 0 ? Float(total) / Float(inputs) : 1
+        }
+
+        init(frequencies: [ActionFrequency]) {
+            self.init(total: frequencies.reduce(0) { $0 + $1.total }, inputs: frequencies.reduce(0) { $0 + $1.inputs })
+            let fallback = self
+            states = frequencies.map { $0.total > 0 ? ActionBalance(total: $0.total, inputs: $0.inputs) : fallback }
+        }
+
+        func forState(_ state: InputState) -> ActionBalance {
+            states.isEmpty ? self : states[ActionFrequency.group(for: state)]
+        }
+    }
+
     static func forward(_ model: PolicyNetwork, _ arrays: [MLXArray]) -> PolicyForward {
         func a(_ field: BatchField) -> MLXArray { arrays[field.rawValue] }
         return model(images: a(.images), crops: model.configuration.detailCrop ? a(.crops) : nil, context: a(.context),
@@ -93,16 +125,30 @@ enum PolicyLoss {
             dynamicsArguments: a(.arguments), hidden: Array(arrays.dropFirst(BatchField.allCases.count)))
     }
 
-    static func values(_ model: PolicyNetwork, _ arrays: [MLXArray], stage: TrainingStage, balanceInputChoices: Bool = false) -> [MLXArray] {
+    static func values(_ model: PolicyNetwork, _ arrays: [MLXArray], stage: TrainingStage, balanceInputChoices: Bool = false,
+                       actionBalance: ActionBalance? = nil) -> [MLXArray] {
         let output = forward(model, arrays)
-        return [loss(output, arrays, stage: stage, balanceInputChoices: balanceInputChoices)] + output.hidden.map { stopGradient($0) }
+        return [loss(output, arrays, stage: stage, balanceInputChoices: balanceInputChoices, actionBalance: actionBalance)] + output.hidden.map { stopGradient($0) }
     }
 
-    /// The optional factorization preserves the recorded wait/input frequency.
-    /// Only conditional input choice is normalized over input-bearing targets, so
-    /// abundant waits do not dilute the gradient for rare key/pointer choices.
+    /// Balanced runs weight both the wait/input gate and conditional input choice
+    /// using training-set frequencies. The legacy choice-only option preserves
+    /// the recorded gate frequency for exact checkpoint resume.
     static func actionLoss(logits: MLXArray, targets: MLXArray, valid: MLXArray,
-                           balanceInputChoices: Bool) -> MLXArray {
+                           balanceInputChoices: Bool, actionBalance: ActionBalance? = nil, sampleWeights: MLXArray? = nil) -> MLXArray {
+        if let balance = actionBalance, logits.dim(-1) > 1 {
+            let input = logits[.ellipsis, 1...]
+            let isInput = (targets .> 0).asType(.int32)
+            let gate = stacked([logits[.ellipsis, 0], logSumExp(input, axis: -1)], axis: -1)
+            let inputMask = isInput.asType(.float32)
+            let weights = sampleWeights?[.ellipsis, 0] ?? ((1 - inputMask) * balance.waitWeight + inputMask * balance.inputWeight)
+            let gateLoss = crossEntropy(logits: gate, targets: isInput) * weights
+            let choice = crossEntropy(logits: input, targets: maximum(targets - 1, 0))
+            // Dataset-wide weights keep rare transitions influential even in
+            // long runs of wait-only chunks. Reductions compose across batches.
+            let choiceWeight = sampleWeights?[.ellipsis, 1] ?? MLXArray(balance.choiceWeight)
+            return sum((gateLoss + choice * inputMask * choiceWeight) * valid) / maximum(sum(valid), 1)
+        }
         guard balanceInputChoices, logits.dim(-1) > 1 else {
             return sum(crossEntropy(logits: logits, targets: targets) * valid) / maximum(sum(valid), 1)
         }
@@ -115,7 +161,8 @@ enum PolicyLoss {
         return gateLoss + sum(choice * inputValid) / maximum(sum(inputValid), 1)
     }
 
-    static func loss(_ output: PolicyForward, _ arrays: [MLXArray], stage: TrainingStage, balanceInputChoices: Bool = false) -> MLXArray {
+    static func loss(_ output: PolicyForward, _ arrays: [MLXArray], stage: TrainingStage, balanceInputChoices: Bool = false,
+                     actionBalance: ActionBalance? = nil) -> MLXArray {
         func a(_ field: BatchField) -> MLXArray { arrays[field.rawValue] }
         let loss: MLXArray
         if stage == .pretraining {
@@ -128,7 +175,6 @@ enum PolicyLoss {
             loss = sum(perStep * valid) / maximum(sum(valid), 1)
         } else {
             let valid = a(.valid)
-            let action = crossEntropy(logits: output.actionLogits + a(.actionMask), targets: a(.actions))
             let delayLogits = takeAlong(output.delayLogits, a(.actions).expandedDimensions(axes: [2, 3]), axis: 2).squeezed(axis: 2)
             let timing = crossEntropy(logits: delayLogits, targets: a(.delay))
             let spatial = crossEntropy(logits: output.spatialLogits, targets: a(.spatial))
@@ -136,13 +182,15 @@ enum PolicyLoss {
             let offset = mean(square(selectedOffset - a(.offsets)), axis: -1)
             let selectedArguments = takeAlong(output.continuousArguments, a(.actions).expandedDimensions(axes: [2, 3]), axis: 2).squeezed(axis: 2)
             let arguments = mean(square(selectedArguments - a(.arguments)), axis: -1)
-            if balanceInputChoices {
+            if balanceInputChoices || actionBalance != nil {
                 let choice = actionLoss(logits: output.actionLogits + a(.actionMask), targets: a(.actions), valid: valid,
-                                        balanceInputChoices: true)
+                                        balanceInputChoices: balanceInputChoices, actionBalance: actionBalance,
+                                        sampleWeights: actionBalance == nil ? nil : a(.actionWeights))
                 let auxiliary = 0.25 * timing + a(.pointerMask) * (spatial + 2 * offset) + a(.continuousMask) * arguments
                 loss = choice + sum(auxiliary * valid) / maximum(sum(valid), 1)
             } else {
                 // Preserve the existing objective and reduction order for old runs.
+                let action = crossEntropy(logits: output.actionLogits + a(.actionMask), targets: a(.actions))
                 let perStep = action + 0.25 * timing + a(.pointerMask) * (spatial + 2 * offset) + a(.continuousMask) * arguments
                 loss = sum(perStep * valid) / maximum(sum(valid), 1)
             }
@@ -173,6 +221,27 @@ struct ActionEvaluation: Codable, Equatable, Sendable {
     var accuracy: Double? { total > 0 ? Double(correct) / Double(total) : nil }
     var nonWaitAccuracy: Double? { nonWaitTotal > 0 ? Double(nonWaitCorrect) / Double(nonWaitTotal) : nil }
     var nonWaitPrecision: Double? { nonWaitPredictions > 0 ? Double(nonWaitCorrect) / Double(nonWaitPredictions) : nil }
+    var pressRecall: Double? {
+        guard let rows = actionBreakdown else { return nil }
+        let presses = rows.filter {
+            switch $0.action { case .keyDown, .buttonDown: return true; default: return false }
+        }
+        let count = presses.reduce(0) { $0 + $1.targets }
+        return count > 0 ? Double(presses.reduce(0) { $0 + $1.correct }) / Double(count) : nil
+    }
+    var collapseWarning: String? {
+        guard nonWaitTotal > 0 else { return nil }
+        if nonWaitPredictions == 0 {
+            return "This checkpoint predicted only Wait despite demonstrated inputs. Retrain with balanced action frequency before relying on Run."
+        }
+        let presses = actionBreakdown?.filter {
+            switch $0.action { case .keyDown, .buttonDown: return true; default: return false }
+        } ?? []
+        if presses.reduce(0, { $0 + $1.targets }) > 0 && presses.reduce(0, { $0 + $1.predictions }) == 0 {
+            return "This checkpoint never predicted a key or button press. Correct releases alone cannot start an action in Run."
+        }
+        return nil
+    }
 
     mutating func add(_ other: Self) {
         if total == 0 {
@@ -194,8 +263,8 @@ struct ActionEvaluation: Codable, Equatable, Sendable {
     }
 
     static func measure(logits: MLXArray, targets: MLXArray, valid: MLXArray, mask: MLXArray,
-                        actions: [ComputerAction]) -> Self {
-        let prediction = argMax(logits + mask, axis: -1)
+                        actions: [ComputerAction], hierarchical: Bool = false) -> Self {
+        let prediction = PolicyRunner.selectAction(logits: logits + mask, hierarchical: hierarchical)
         let tokens = MLXArray((0..<actions.count).map(Int32.init))
         let targetColumns = (targets.reshaped([-1, 1]) .== tokens).asType(.float32)
         let predictionColumns = (prediction.reshaped([-1, 1]) .== tokens).asType(.float32)

@@ -30,6 +30,18 @@ Bounded attention retains at most sequence-length minus one fused observation fe
 
 Use event-level targets so several transitions between images remain learnable. Teacher forcing supplies preceding actions during training; inference conditions on actions actually executed. Mask action family, key/button choice and action-dependent arguments coherently. Timing is part of the target, including wait intervals. Track event likelihood, transition validity, pointer error, timing error and actual closed-loop completion.
 
+## Sparse inputs and action selection
+
+A held key is state, not a stream of new presses. Wait keeps that state unchanged until an explicit release. The inspector shows held input alongside raw transitions, and Run labels waits during a hold as “Hold W”, for example.
+
+New imitation runs balance the wait/input gate separately for four input-state groups: idle, keyboard held, mouse held, and both held. Counts come only from the training split. Within each group, observed waits and inputs receive equal total gate weight; conditional input choice is normalized over that group's inputs. These fixed dataset weights travel with each batch, so wait-only chunks cannot dilute rare initial presses through per-batch normalization. Absent classes retain finite evaluation weight. Validation uses the same weights and reductions, and reports exact press recall separately from repeats/releases.
+
+Balanced checkpoints use hierarchical decoding: decide Wait versus the combined probability of valid inputs, then select the input. Flat token argmax can otherwise select Wait even when acting has the larger total probability. Grammar masking precedes both decisions. Genuine Wait choices remain possible; no key is forced. Sampled selection applies temperature to each distribution. Both recorded-history evaluation and Run use this selector.
+
+The optional `balancedActionFrequency` and `actionBalanceVersion` fields version the objective without changing model tensors or recording bytes. Missing fields preserve legacy behavior and exact Resume. New app settings upgrade to state balancing (version 2); legacy conditional-choice balancing remains available as a comparison. Fine-tuning can reuse compatible weights with a fresh optimizer. Existing collapsed weights need retraining; the app does not relabel them as repaired.
+
+Checkpoints carry a training-run UUID. Best-checkpoint selection must match that run, dataset, architecture, and loss settings, preventing an earlier run from silently replacing newer weights. Run displays the selected checkpoint and warns about validation that predicts no input or no presses. These diagnostics do not establish task competence; a policy may still repeat controls, miss releases, or fail on new scenes.
+
 ## Pre-training
 
 Pre-training uses only separately assigned pre-training data. The selected predictor produces future patch-average RGB values from visual tokens, temporal features and the recorded action/arguments, with extra weight on changing patches. Fixed pixel targets cannot collapse along with the encoder. The action decoder is not trained to copy recorded behavior in this stage. Imitation initializes the shared encoder and temporal weights from the compatible pretrained checkpoint. Hold-out sets split by recording, not adjacent frames, to avoid temporal leakage.
