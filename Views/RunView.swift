@@ -141,6 +141,9 @@ struct RunView: View {
             if runner.catalog.displays.isEmpty { await refresh() }
         }
         .onChange(of: runner.configuration.modelID) { _, _ in if let model { runner.configuration.permissions = model.configuration.capabilities } }
+        .onChange(of: session.store.models.filter(\.canRun).map(\.id), initial: true) { _, ids in
+            if let selected = runner.configuration.modelID, !ids.contains(selected) { runner.configuration.modelID = nil }
+        }
         .onDisappear { runner.saveConfiguration() }
     }
 

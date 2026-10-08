@@ -6,6 +6,11 @@ enum TemporalArchitecture: String, Codable, CaseIterable, Identifiable, Sendable
     var id: String { rawValue }
 }
 
+enum DynamicsPredictor: String, Codable, CaseIterable, Identifiable, Sendable {
+    case linear = "Linear RGB", spatialInteraction = "Spatial action interaction"
+    var id: String { rawValue }
+}
+
 struct PolicyConfiguration: Codable, Equatable, Sendable {
     static let implementationVersion = 2
     var schemaVersion = 1
@@ -20,6 +25,10 @@ struct PolicyConfiguration: Codable, Equatable, Sendable {
     var detailCrop = true
     var instructionConditioning = true
     var capabilities = ActionCapabilities()
+    // Missing in existing configurations: retain their exact linear head and
+    // fingerprint. New models can learn localized action-dependent changes.
+    var dynamicsPredictor: DynamicsPredictor? = .spatialInteraction
+    var usesSpatialDynamics: Bool { dynamicsPredictor == .spatialInteraction }
 
     func validate() throws {
         guard schemaVersion == 1, (64...512).contains(imageSize), (8...32).contains(patchSize), imageSize % patchSize == 0,
@@ -54,7 +63,8 @@ struct PolicyConfiguration: Codable, Equatable, Sendable {
         // Earlier attention weights were trained with resets at chunk boundaries.
         // Keep recurrent compatibility, but require retraining those attention models.
         let memoryExtension = memory == .attention ? "|sliding-attention-carry-v1" : ""
-        return SHA256.hash(data: Data((stable.joined(separator: "|") + repeatExtension + memoryExtension).utf8)).map { String(format: "%02x", $0) }.joined()
+        let dynamicsExtension = usesSpatialDynamics ? "|spatial-action-dynamics-v1" : ""
+        return SHA256.hash(data: Data((stable.joined(separator: "|") + repeatExtension + memoryExtension + dynamicsExtension).utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }
 

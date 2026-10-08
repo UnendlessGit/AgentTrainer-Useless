@@ -7,6 +7,9 @@ final class WorkspaceStore {
     private(set) var folders: [LibraryFolder] = []
     private(set) var recordings: [RecordingItem] = []
     private(set) var models: [AIModel] = []
+    // Unsaved editor state survives navigation in this app session. It never
+    // changes the persisted architecture or checkpoint compatibility until Save.
+    var modelDrafts: [UUID: AIModel] = [:]
     private(set) var loading = false
     var migrating = false
     var activeOperations: Set<String> = []
@@ -225,6 +228,7 @@ final class WorkspaceStore {
         let url = modelRoot.appendingPathComponent(model.id.uuidString + ".json")
         try FileManager.default.trashItem(at: url, resultingItemURL: nil)
         models.removeAll { $0.id == model.id }
+        modelDrafts.removeValue(forKey: model.id)
         notice = "Moved “\(model.name)” to Trash. Its checkpoints remain in storage."
     }
 

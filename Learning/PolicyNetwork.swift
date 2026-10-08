@@ -81,6 +81,7 @@ final class PolicyNetwork: Module {
     let argumentHead: Linear
     let delayHead: Linear
     let dynamicsActionEmbedding: Embedding
+    let dynamicsProjection: [Linear]
     let dynamics: Linear
     let configuration: PolicyConfiguration
     let vocabularySize: Int
@@ -111,7 +112,9 @@ final class PolicyNetwork: Module {
         dynamicsActionEmbedding = Embedding(embeddingCount: vocabularySize + 1, dimensions: 32)
         // Predict low-resolution future RGB values at every spatial patch. A pixel
         // target cannot collapse along with a learned encoder representation.
-        dynamics = Linear(c.visualWidth + c.memorySize + 32 + 2, 3)
+        let dynamicsWidth = c.visualWidth + c.memorySize + 32 + 2
+        dynamicsProjection = c.usesSpatialDynamics ? [Linear(dynamicsWidth, 64)] : []
+        dynamics = Linear(c.usesSpatialDynamics ? 64 : dynamicsWidth, 3)
     }
 
     /// Images: [B,T,H,W,3]. Context/action/instruction semantics are identical in
@@ -158,12 +161,20 @@ final class PolicyNetwork: Module {
         let offsets = sigmoid(pointerOffsets(spatialFeatures))
         let dynamicsCondition = concatenated([dynamicsActionEmbedding(dynamicsActions), dynamicsArguments], axis: -1)
             .reshaped([n, 34]).expandedDimensions(axis: 1)
-        let future = sigmoid(dynamics(concatenated([spatialFeatures, broadcast(dynamicsCondition, to: [n, patches, 34])], axis: -1)))
+        let future = predictFuture(concatenated([spatialFeatures, broadcast(dynamicsCondition, to: [n, patches, 34])], axis: -1))
         return PolicyForward(actionLogits: actionHead(temporal), spatialLogits: spatial.reshaped([batch, length, patches]),
             spatialOffsets: offsets.reshaped([batch, length, patches, 2]),
             continuousArguments: tanh(argumentHead(temporal)).reshaped([batch, length, vocabularySize, 2]),
             delayLogits: delayHead(temporal).reshaped([batch, length, vocabularySize, Self.delayBins.count]),
             futurePixels: future.reshaped([batch, length, patches, 3]), visualTokens: tokens, hidden: nextHidden, temporalFeatures: temporal)
+    }
+
+    /// The nonlinear interaction lets one action brighten some patches and
+    /// darken others. A single linear projection can only shift every patch in
+    /// the same direction within a channel when the action changes.
+    func predictFuture(_ features: MLXArray) -> MLXArray {
+        let interacted = dynamicsProjection.first.map { gelu($0(features)) } ?? features
+        return sigmoid(dynamics(interacted))
     }
 
     /// Every supervised step sees exactly the trailing window used by Run.

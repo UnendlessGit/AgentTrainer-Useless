@@ -72,7 +72,17 @@ private struct ModelEditor: View {
     @State private var draft: AIModel
     @State private var showKeys = false
     @State private var showRecordings = false
-    init(store: WorkspaceStore, original: AIModel) { self.store = store; self.original = original; _draft = State(initialValue: original) }
+    init(store: WorkspaceStore, original: AIModel) {
+        self.store = store; self.original = original
+        _draft = State(initialValue: store.modelDrafts[original.id] ?? original)
+    }
+    private var saved: AIModel { store.models.first(where: { $0.id == original.id }) ?? original }
+    private var hasUnsavedChanges: Bool {
+        draft.name != saved.name || draft.configuration != saved.configuration
+            || draft.imitationFolderIDs != saved.imitationFolderIDs
+            || draft.imitationRecordingIDs != saved.imitationRecordingIDs
+            || draft.pretrainingFolderIDs != saved.pretrainingFolderIDs
+    }
     private var checkpointCompatibility: String {
         var current = store.models.first(where: { $0.id == original.id }) ?? original
         current.configuration = draft.configuration
@@ -83,7 +93,7 @@ private struct ModelEditor: View {
             Section("Model") {
                 TextField("Name", text: $draft.name)
                 LabeledContent("Checkpoint", value: checkpointCompatibility)
-                if draft.configuration.fingerprint != original.configuration.fingerprint {
+                if draft.configuration.fingerprint != saved.configuration.fingerprint {
                     Label("Architecture or capability changes require retraining.", systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.orange)
                 }
             }
@@ -148,6 +158,14 @@ private struct ModelEditor: View {
                 }
             }
             Section("Pre-training data") {
+                Picker("Visual dynamics predictor", selection: Binding(
+                    get: { draft.configuration.dynamicsPredictor ?? .linear },
+                    set: { draft.configuration.dynamicsPredictor = $0 }
+                )) {
+                    ForEach(DynamicsPredictor.allCases) { Text($0.rawValue).tag($0) }
+                }
+                Text("Spatial interaction learns action effects that differ by image location. Changing this architecture requires retraining; it does not guarantee better imitation.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Text("Separate observations for learning temporal and action-conditioned representations before imitation learning.").font(.caption).foregroundStyle(.secondary)
                 ForEach(store.folders.filter { $0.kind == .pretraining }) { folder in
                     Toggle(store.folderPath(folder), isOn: Binding(get: { draft.pretrainingFolderIDs.contains(folder.id) }, set: {
@@ -155,7 +173,28 @@ private struct ModelEditor: View {
                     }))
                 }
             }
-            Section { Button("Save model configuration") { store.perform { try store.saveModelConfiguration(draft); store.notice = "Model configuration saved." } }.buttonStyle(.borderedProminent) }
+            Section {
+                if hasUnsavedChanges {
+                    Text("Unsaved changes · kept while this app is open").font(.caption).foregroundStyle(.orange)
+                }
+                HStack {
+                    Button("Save model configuration") {
+                        store.perform {
+                            try store.saveModelConfiguration(draft)
+                            store.modelDrafts.removeValue(forKey: original.id)
+                            store.notice = "Model configuration saved."
+                        }
+                    }.buttonStyle(.borderedProminent)
+                    Button("Discard changes") {
+                        draft = saved
+                        store.modelDrafts.removeValue(forKey: original.id)
+                    }.disabled(!hasUnsavedChanges)
+                }
+            }
         }.formStyle(.grouped).disabled(!store.activeOperations.isEmpty || store.migrating)
+        .onDisappear {
+            if hasUnsavedChanges, store.models.contains(where: { $0.id == original.id }) { store.modelDrafts[original.id] = draft }
+            else { store.modelDrafts.removeValue(forKey: original.id) }
+        }
     }
 }

@@ -5,6 +5,46 @@ import MLXRandom
 @testable import AgentTrainer
 
 final class PolicyNetworkTests: XCTestCase {
+    func testSpatialDynamicsCanRepresentOppositeLocalizedEffectsOfOneAction() {
+        let model = PolicyNetwork(configuration: configuration(.recurrent))
+        let width = model.configuration.visualWidth + model.configuration.memorySize + 34
+        var projection = Array(repeating: Float(0), count: 64 * width)
+        for (row, coefficients) in [[Float(1), 1], [-1, -1], [1, -1], [-1, 1]].enumerated() {
+            projection[row * width] = coefficients[0]
+            projection[row * width + width - 1] = coefficients[1]
+        }
+        var output = Array(repeating: Float(0), count: 3 * 64)
+        for channel in 0..<3 { for (index, value) in [Float(1), 1, -1, -1].enumerated() { output[channel * 64 + index] = value } }
+        model.dynamicsProjection[0].update(parameters: ModuleParameters.unflattened([
+            "weight": MLXArray(projection, [64, width]), "bias": MLXArray.zeros([64])]))
+        model.dynamics.update(parameters: ModuleParameters.unflattened([
+            "weight": MLXArray(output, [3, 64]), "bias": MLXArray.zeros([3])]))
+        var features = Array(repeating: Float(0), count: 2 * width)
+        features[0] = 1; features[width] = -1
+        let before = model.predictFuture(MLXArray(features, [1, 2, width]))
+        features[width - 1] = 1; features[2 * width - 1] = 1
+        let after = model.predictFuture(MLXArray(features, [1, 2, width]))
+        XCTAssertEqual(before[0, 0, 0].item(Float.self), 0.5, accuracy: 1e-6)
+        XCTAssertEqual(before[0, 1, 0].item(Float.self), 0.5, accuracy: 1e-6)
+        XCTAssertGreaterThan(after[0, 0, 0].item(Float.self), 0.7)
+        XCTAssertLessThan(after[0, 1, 0].item(Float.self), 0.3)
+    }
+
+    func testLegacyDynamicsConfigurationPreservesCheckpointFingerprintAndTensorShape() throws {
+        let legacy = Data(#"{"capabilities":{"buttons":[],"chords":false,"dragging":false,"keys":[84,51,83],"maximumHeldKeys":6,"pointer":false,"relativePointer":false,"scrolling":false},"detailCrop":false,"imageSize":128,"instructionConditioning":true,"memory":"Recurrent memory","memoryDepth":2,"memorySize":128,"patchSize":16,"schemaVersion":1,"sequenceLength":32,"visualDepth":3,"visualWidth":64}"#.utf8)
+        var c = try JSONDecoder().decode(PolicyConfiguration.self, from: legacy)
+        XCTAssertFalse(c.usesSpatialDynamics)
+        XCTAssertEqual(c.fingerprint, "1a4f4f6d73b38588014436d95139198ac2fa30b2e32e442e27e5d2d4c7974381")
+        let model = PolicyNetwork(configuration: c)
+        XCTAssertTrue(model.dynamicsProjection.isEmpty)
+        XCTAssertEqual(model.dynamics.weight.shape, [3, 226])
+        c.dynamicsPredictor = .linear
+        XCTAssertEqual(c.fingerprint, model.configuration.fingerprint)
+        c.dynamicsPredictor = .spatialInteraction
+        XCTAssertNotEqual(c.fingerprint, model.configuration.fingerprint)
+        XCTAssertTrue(PolicyConfiguration().usesSpatialDynamics)
+    }
+
     func testHeldOutMetricsExposeWaitCollapseAndExcludePadding() {
         let logits = MLXArray([Float(9), 1, 0, 9, 1, 0, 9, 1, 0, 9, 1, 0], [1, 4, 3])
         let targets = MLXArray([Int32(0), 1, 2, 0], [1, 4])

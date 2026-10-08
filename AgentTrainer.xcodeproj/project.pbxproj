@@ -32,6 +32,7 @@
 		5A07A54E48EFED880EF761D9 /* RecordingJournal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60909A6B7D4515BE23622454 /* RecordingJournal.swift */; };
 		5BF37EA108442F91F1600EAE /* TrainingExampleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD048CE370F2DA09D56280E2 /* TrainingExampleTests.swift */; };
 		5F0F23EE65E541C5D0252BA7 /* MLXOptimizers in Frameworks */ = {isa = PBXBuildFile; productRef = EE71FB7C22B54F9721B3D1D5 /* MLXOptimizers */; };
+		5F379787B0D18C27DA095A09 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 86AE9097CB2C88933EA52D90 /* Assets.xcassets */; };
 		5F963CB5DA6B146D83EC51B2 /* ActionGrammarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F48FBAF0744344A8226BF986 /* ActionGrammarTests.swift */; };
 		5F997FECB9D451A4B1023F13 /* WorkspaceStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89ABDCB7CF9B3895B27F11C0 /* WorkspaceStoreTests.swift */; };
 		66DD98E7CE404541DCBFEE81 /* AgentInputExecutorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06B284D43F3F1BE9852CF236 /* AgentInputExecutorTests.swift */; };
@@ -150,6 +151,7 @@
 		827DC1991C9668920979AB01 /* AgentTrainerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgentTrainerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		831C39BEE18EFE63B8E1241E /* StorageMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageMigration.swift; sourceTree = "<group>"; };
 		8524FBC246119A40A780EE68 /* TrainingBatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingBatch.swift; sourceTree = "<group>"; };
+		86AE9097CB2C88933EA52D90 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		89ABDCB7CF9B3895B27F11C0 /* WorkspaceStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceStoreTests.swift; sourceTree = "<group>"; };
 		89B7337BCED3E0F9B2A9917B /* SequenceDataset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SequenceDataset.swift; sourceTree = "<group>"; };
 		8C31DE9F561334A1F0187FEE /* RecordView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordView.swift; sourceTree = "<group>"; };
@@ -252,6 +254,7 @@
 				8D8D8C6545AE0146F18C281E /* Core */,
 				77B4EC407E48644EB2410BE4 /* Learning */,
 				3889A3AF4B2EB682DDEFA21C /* Models */,
+				AB4753BAD88E98052A7E46D7 /* Resources */,
 				C4F8F43D5903F1E554A15069 /* Services */,
 				425FCD477E188357B1E9D67C /* Stores */,
 				3348C3E28108F8BAA4C4E4C1 /* Support */,
@@ -311,6 +314,14 @@
 				F766B7219B09F66808404E6C /* TrainingExample.swift */,
 			);
 			path = Core;
+			sourceTree = "<group>";
+		};
+		AB4753BAD88E98052A7E46D7 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				86AE9097CB2C88933EA52D90 /* Assets.xcassets */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 		C4F8F43D5903F1E554A15069 /* Services */ = {
@@ -417,6 +428,7 @@
 			buildConfigurationList = 2A0ABC2AA0125FC220471D94 /* Build configuration list for PBXNativeTarget "AgentTrainer" */;
 			buildPhases = (
 				0EC3BA61321455143F4B65F0 /* Sources */,
+				C307BDA850211C996DB5099F /* Resources */,
 				6296968CE40A248B45208599 /* Frameworks */,
 			);
 			buildRules = (
@@ -481,6 +493,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		C307BDA850211C996DB5099F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5F379787B0D18C27DA095A09 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		0EC3BA61321455143F4B65F0 /* Sources */ = {
@@ -616,6 +639,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
@@ -694,6 +718,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";

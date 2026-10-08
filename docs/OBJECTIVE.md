@@ -426,3 +426,7 @@ Create a new GitHub repository named **AgentTrainer** for this project.
 Use this repository throughout development and keep the project source committed to it as development progresses.
 
 Use `main` as the primary branch and keep the repository up to date with the completed implementation.
+
+## Updated implementation priority
+
+Keep testing targeted and proportionate. Prioritize further implementation over repeated or exhaustive testing; testing remains important.

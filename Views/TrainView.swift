@@ -21,6 +21,9 @@ struct TrainView: View {
                             Text("Select a model").tag(nil as UUID?)
                             ForEach(store.models) { Text($0.name).tag(Optional($0.id)) }
                         }.disabled(trainer.isBusy)
+                        .onChange(of: store.models.map(\.id), initial: true) { _, ids in
+                            if let selected = trainer.selectedModelID, !ids.contains(selected) { trainer.selectedModelID = nil }
+                        }
                         if let model { Text(model.compatibility).font(.caption).foregroundStyle(.secondary) }
                     }
                     HStack(alignment: .top, spacing: 20) {

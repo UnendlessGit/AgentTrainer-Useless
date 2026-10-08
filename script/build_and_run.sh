@@ -8,22 +8,24 @@ if ! security find-identity -v -p codesigning | /usr/bin/grep "$SIGNING_IDENTITY
   echo 'The configured Apple Development certificate is unavailable. No ad hoc fallback is permitted.' >&2
   exit 1
 fi
-case "$MODE" in run|--debug|--logs|--telemetry|--verify|--build|--test) ;; *) echo 'Usage: build_and_run.sh [--build|--test|--debug|--logs|--telemetry|--verify]' >&2; exit 2 ;; esac
-if [[ "$MODE" != --build && "$MODE" != --test ]]; then
+case "$MODE" in run|--debug|--logs|--telemetry|--verify|--build|--release|--test) ;; *) echo 'Usage: build_and_run.sh [--build|--release|--test|--debug|--logs|--telemetry|--verify]' >&2; exit 2 ;; esac
+if [[ "$MODE" != --build && "$MODE" != --release && "$MODE" != --test ]]; then
   pkill -x AgentTrainer >/dev/null 2>&1 || true
 fi
 ACTION=build
+CONFIGURATION=Debug
+[[ "$MODE" == --release ]] && CONFIGURATION=Release
 [[ "$MODE" == --test ]] && ACTION=test
 TEST_OPTIONS=(-quiet)
 if [[ "$MODE" == --test ]]; then
   TEST_OPTIONS=(-test-timeouts-enabled YES -default-test-execution-time-allowance 60 -maximum-test-execution-time-allowance 1200)
 fi
-xcodebuild -project AgentTrainer.xcodeproj -scheme AgentTrainer -configuration Debug \
+xcodebuild -project AgentTrainer.xcodeproj -scheme AgentTrainer -configuration "$CONFIGURATION" \
   -destination 'platform=macOS,arch=arm64' -derivedDataPath build \
   CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" DEVELOPMENT_TEAM=V5S6J7KC33 CODE_SIGN_STYLE=Manual "${TEST_OPTIONS[@]}" "$ACTION"
-APP_BUNDLE="$ROOT_DIR/build/Build/Products/Debug/AgentTrainer.app"
+APP_BUNDLE="$ROOT_DIR/build/Build/Products/$CONFIGURATION/AgentTrainer.app"
 codesign --verify --deep --strict "$APP_BUNDLE"
-if [[ "$MODE" == --build || "$MODE" == --test ]]; then exit 0; fi
+if [[ "$MODE" == --build || "$MODE" == --release || "$MODE" == --test ]]; then exit 0; fi
 if [[ "$MODE" == --debug ]]; then
   lldb -- "$APP_BUNDLE/Contents/MacOS/AgentTrainer"
   exit
