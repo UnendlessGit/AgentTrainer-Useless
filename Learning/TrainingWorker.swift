@@ -228,8 +228,21 @@ enum TrainingWorker {
                         }
                     }
                     model.train(true)
+                    // Keep the cursor at the end of training until validation
+                    // finishes. Resume then repeats this held-out pass using the
+                    // same weights instead of silently skipping it (or claiming
+                    // completion when interrupted in the final epoch).
+                    if control.current != .run || Date() >= deadline {
+                        validationLoss = nil; progress.actionEvaluation = nil
+                        try saveCheckpoint(isBest: false)
+                        let cancelled = control.current == .cancel
+                        report(cancelled ? .cancelled : .paused,
+                               cancelled ? "Cancelled safely during validation. Resume will repeat the held-out pass."
+                               : "Paused during validation. Resume will repeat the held-out pass.")
+                        return
+                    }
                     // Only a complete held-out pass can select the best checkpoint.
-                    let validationComplete = examples > 0 && control.current == .run && Date() < deadline
+                    let validationComplete = examples > 0
                     validationLoss = validationComplete ? Float(weightedLoss / Double(examples)) : nil
                     progress.actionEvaluation = validationComplete && stage == .imitation ? evaluation : nil
                     let improved = validationLoss.map { $0 < (bestLoss ?? .infinity) } ?? false

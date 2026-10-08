@@ -98,9 +98,9 @@ private struct ModelEditor: View {
                 Picker("Temporal architecture", selection: $draft.configuration.memory) { ForEach(TemporalArchitecture.allCases) { Text($0.rawValue).tag($0) } }
                 Picker("Memory width", selection: $draft.configuration.memorySize) { ForEach([128, 256, 512], id: \.self) { Text("\($0)").tag($0) } }
                 Stepper("Memory layers: \(draft.configuration.memoryDepth)", value: $draft.configuration.memoryDepth, in: 1...4)
-                Picker("Sequence length", selection: $draft.configuration.sequenceLength) { ForEach([16, 32, 64, 128], id: \.self) { Text("\($0) observations").tag($0) } }
+                Picker("Sequence length", selection: $draft.configuration.sequenceLength) { ForEach([16, 32, 64, 128], id: \.self) { Text("\($0) decisions").tag($0) } }
                 Toggle("Use task instructions", isOn: $draft.configuration.instructionConditioning)
-                Text("Geometry, cursor position, previous actions, elapsed time and input state are included in the observation contract.").font(.caption).foregroundStyle(.secondary)
+                Text("Memory advances with each input transition or wait decision. Geometry, cursor position, previous actions, elapsed time and input state are included.").font(.caption).foregroundStyle(.secondary)
             }
             Section("Action capabilities") {
                 Toggle("Move pointer", isOn: $draft.configuration.capabilities.pointer)

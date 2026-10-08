@@ -176,6 +176,45 @@ final class TrainingPipelineTests: XCTestCase {
         try checkWorkerPauseResume(architecture: .attention)
     }
 
+    func testInterruptedFinalValidationResumesWithoutRepeatingTraining() throws {
+        for (request, expectedPhase) in [(TrainingControl.Request.pause, TrainingPhase.paused), (.cancel, .cancelled)] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let items = try [recording(root: root), recording(root: root)]
+            var model = AIModel(name: "Interrupted validation"); model.configuration = configuration()
+            var settings = TrainingSettings(); settings.epochs = 1; settings.batchSize = 1; settings.checkpointInterval = 100
+            let preferences = AppPreferences.defaults(at: root), control = TrainingControl(), progress = ProgressCollector()
+            TrainingWorker.run(TrainingRequest(model: model, settings: settings, stage: .imitation, items: items,
+                preferences: preferences, resume: false), control: control, publish: { update in
+                    progress.append(update)
+                    if update.phase == .validating { control.set(request) }
+                }, checkpointSaved: { _ in })
+            XCTAssertEqual(progress.last?.phase, expectedPhase, progress.last?.message ?? "Missing progress")
+            let store = CheckpointStore(root: URL(fileURLWithPath: preferences.checkpointsPath))
+            let interrupted = try XCTUnwrap(store.latest(modelID: model.id, stage: .imitation, configuration: model.configuration))
+            XCTAssertEqual(interrupted.0.epoch, 0, "An unfinished validation pass must not advance the epoch.")
+            XCTAssertGreaterThan(interrupted.0.sampleCursor, 0)
+            XCTAssertNil(interrupted.0.validationLoss)
+            XCTAssertNil(interrupted.0.actionEvaluation)
+            let weightsBefore = try MLX.loadArrays(url: interrupted.1.appendingPathComponent("weights.safetensors"))
+            let resumed = ProgressCollector()
+            TrainingWorker.run(TrainingRequest(model: model, settings: settings, stage: .imitation, items: items,
+                preferences: preferences, resume: true), control: TrainingControl(), publish: resumed.append, checkpointSaved: { _ in })
+            XCTAssertEqual(resumed.last?.phase, .complete, resumed.last?.message ?? "Missing progress")
+            let completed = try XCTUnwrap(store.latest(modelID: model.id, stage: .imitation, configuration: model.configuration))
+            XCTAssertEqual(completed.0.epoch, 1)
+            XCTAssertEqual(completed.0.sampleCursor, 0)
+            XCTAssertEqual(completed.0.step, interrupted.0.step, "Resume should validate the same weights without another optimizer update.")
+            XCTAssertNotNil(completed.0.validationLoss)
+            XCTAssertEqual(completed.0.actionEvaluation?.total, 11, "Only a complete held-out pass can publish evaluation metrics.")
+            let weightsAfter = try MLX.loadArrays(url: completed.1.appendingPathComponent("weights.safetensors"))
+            XCTAssertEqual(Set(weightsAfter.keys), Set(weightsBefore.keys))
+            for key in weightsBefore.keys {
+                XCTAssertEqual(max(abs(weightsBefore[key]! - weightsAfter[key]!)).item(Float.self), 0, key)
+            }
+        }
+    }
+
     func testBalancedChoiceWorkerResumeMatchesUninterruptedWeights() throws {
         try checkWorkerPauseResume(architecture: .recurrent, balanceInputChoices: true)
     }

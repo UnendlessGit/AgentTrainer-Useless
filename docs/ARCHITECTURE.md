@@ -40,6 +40,8 @@ The current linear RGB head has a known capacity limit: for a fixed scene/histor
 
 A resumable checkpoint contains model weights, optimizer state, recurrent carry, stage, step/epoch/cursor, deterministic shuffle seed, data selection/split identity and preprocessing/action/configuration fingerprints. The current optimizer loop has no stochastic augmentation or dropout; adding either requires preserving its RNG state as well. Write a complete new checkpoint directory, synchronize it, then atomically replace the latest/best pointer. Never overwrite the previous valid checkpoint in place. A configuration mismatch makes the checkpoint unusable until the user restores the compatible configuration or retrains.
 
+An interrupted validation pass preserves the end-of-training cursor without advancing the epoch. Resume repeats the complete held-out pass with the same weights and optimizer step before publishing scores or selecting a best checkpoint.
+
 The validation pointer tracks lowest loss on recorded histories, not measured live task completion. Run explicitly distinguishes it from the latest training checkpoint. Both need live comparison when selecting a policy; the delayed-recall experiment passed with final attention weights while its lower-loss checkpoint failed.
 
 Library previews build cancellable disk time/offset indexes and decode only the selected frame and a bounded input interval. Temporary indexes do not replace source journals. Reviewed interrupted or failed recordings may use a valid complete prefix; malformed complete rows and missing images still fail validation. Checkpoint cleanup preserves every best/latest pointer, every model reference and three recent copies per stage, and fails closed for a model with malformed metadata.
